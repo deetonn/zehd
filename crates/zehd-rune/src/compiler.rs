@@ -197,7 +197,7 @@ impl Compiler {
             let span = Span::new(0, 0);
             self.builder.emit(Op::Unit, span);
             self.builder.emit(Op::Return, span);
-            self.builder.local_count = self.next_local_slot();
+            // local_count is tracked eagerly in declare_local()
             Some(std::mem::replace(&mut self.builder, ChunkBuilder::new("<tmp>")).build())
         } else {
             None
@@ -259,7 +259,7 @@ impl Compiler {
         // If the block has no tail expr and the last op isn't Return, add implicit unit return.
         self.ensure_return(func.span);
 
-        self.builder.local_count = self.next_local_slot();
+        // local_count is tracked eagerly in declare_local()
         let chunk = std::mem::replace(&mut self.builder, saved_builder).build();
 
         // Restore state.
@@ -306,7 +306,7 @@ impl Compiler {
         self.compile_block(&http.body);
         self.ensure_return(http.span);
 
-        self.builder.local_count = self.next_local_slot();
+        // local_count is tracked eagerly in declare_local()
         let chunk = std::mem::replace(&mut self.builder, saved_builder).build();
 
         self.locals = saved_locals;
@@ -331,7 +331,7 @@ impl Compiler {
                 self.compile_block(&init.body);
                 self.ensure_return(init.span);
 
-                self.builder.local_count = self.next_local_slot();
+                // local_count is tracked eagerly in declare_local()
                 let chunk = std::mem::replace(&mut self.builder, saved_builder).build();
 
                 self.locals = saved_locals;
@@ -361,7 +361,7 @@ impl Compiler {
                 self.compile_block(&handler.body);
                 self.ensure_return(handler.span);
 
-                self.builder.local_count = self.next_local_slot();
+                // local_count is tracked eagerly in declare_local()
                 let chunk = std::mem::replace(&mut self.builder, saved_builder).build();
 
                 self.locals = saved_locals;
@@ -1292,7 +1292,7 @@ impl Compiler {
             }
         }
 
-        self.builder.local_count = self.next_local_slot();
+        // local_count is tracked eagerly in declare_local()
         let chunk = std::mem::replace(&mut self.builder, saved_builder).build();
 
         // Restore state.
@@ -1362,6 +1362,13 @@ impl Compiler {
             slot,
             depth: self.scope_depth,
         });
+        // Track max locals for correct pre-allocation in the VM.
+        // next_local_slot() may undercount after end_scope() pops locals,
+        // so we update local_count eagerly here.
+        let needed = slot + 1;
+        if needed > self.builder.local_count {
+            self.builder.local_count = needed;
+        }
         slot
     }
 

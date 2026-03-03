@@ -1,0 +1,15 @@
+[package]
+name = "zehd-ward"
+version = "0.1.0"
+edition = "2021"
+description = "Bytecode VM / interpreter for the zehd language"
+
+[dependencies]
+zehd-tome = { path = "../zehd-tome" }
+zehd-rune = { path = "../zehd-rune" }
+
+[dev-dependencies]
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
+zehd-sigil = { path = "../zehd-sigil" }
+zehd-rune = { path = "../zehd-rune" }
