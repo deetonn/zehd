@@ -1,0 +1,10 @@
+[package]
+name = "zehd-codex"
+version = "0.1.0"
+edition = "2021"
+description = "Parser for the zehd programming language"
+
+[dependencies]
+zehd-tome = { path = "../zehd-tome" }
+
+[dev-dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "zehd-tome"
+version = "0.1.0"
+edition = "2021"
+description = "Lexer/tokenizer for the zehd programming language"
+
+[dependencies]
+# None — std only

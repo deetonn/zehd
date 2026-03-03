@@ -1,0 +1,26 @@
+import { proxy } from std;
+// OR
+// import std::proxy;
+
+import std::types::Response;
+
+get {
+    // All types must be available
+    // Always have 'self' implicitly available
+    const res: Response = self.response;
+
+    res.headers.set("x-server-location", "lhr1:233")
+
+    // Returns are automatically serialized into JSON on the body.
+    return {
+        name: "Zehd",
+        version: "1.2.3"
+    }
+}
+
+// init.z - Top level statements that execute once at the beginning of execution.
+
+import { use, rateLimit } from std;
+
+// We will have the npm package 'ms' syntax builtin. Auto converts time values like (10s, 89m) into milliseconds.
+use(rateLimit("rollingWindow", 60s))

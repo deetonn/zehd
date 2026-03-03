@@ -1,0 +1,18 @@
+[package]
+name = "zehd-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tooling for the zehd programming language"
+
+[[bin]]
+name = "zehd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cliclack = "0.3"
+owo-colors = "4"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

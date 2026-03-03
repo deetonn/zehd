@@ -1,0 +1,13 @@
+[package]
+name = "zehd-sigil"
+version = "0.1.0"
+edition = "2021"
+description = "Type checker, semantic analyzer & optimizer for the zehd language"
+
+[dependencies]
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
+
+[dev-dependencies]
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
