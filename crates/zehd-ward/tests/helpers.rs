@@ -73,7 +73,20 @@ pub fn run_handler(source: &str, handler_index: usize) -> Value {
             .unwrap_or_else(|e| panic!("runtime error in server_init: {e}"));
     }
 
-    vm.execute_handler(handler_index, &context)
+    let self_value = Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String(String::new())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+    vm.execute_handler(handler_index, &context, self_value)
         .unwrap_or_else(|e| panic!("runtime error in handler: {e}"))
 }
 

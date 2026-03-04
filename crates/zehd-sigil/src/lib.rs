@@ -20,7 +20,7 @@ use types::Type;
 /// Maps module path (e.g. `"std"`, `"std::log"`) to its exported names and types.
 pub type ModuleTypes = HashMap<String, HashMap<String, Type>>;
 
-use types::FunctionType;
+use types::{FunctionType, StructType};
 
 /// Build the type signatures for the zehd standard library.
 ///
@@ -57,6 +57,37 @@ pub fn std_module_types() -> ModuleTypes {
                 Type::Function(FunctionType {
                     params: vec![Type::String],
                     return_type: Box::new(Type::Unit),
+                }),
+            ),
+        ]),
+    );
+
+    // std::http — Request and Response types
+    m.insert(
+        "std::http".to_string(),
+        HashMap::from([
+            (
+                "Request".to_string(),
+                Type::Struct(StructType {
+                    name: Some("Request".to_string()),
+                    fields: vec![
+                        ("method".to_string(), Type::String),
+                        ("path".to_string(), Type::String),
+                        ("headers".to_string(), Type::Map(Box::new(Type::String), Box::new(Type::String))),
+                        ("body".to_string(), Type::String),
+                        ("query".to_string(), Type::String),
+                    ],
+                    type_params: vec![],
+                }),
+            ),
+            (
+                "Response".to_string(),
+                Type::Struct(StructType {
+                    name: Some("Response".to_string()),
+                    fields: vec![
+                        ("status".to_string(), Type::Int),
+                    ],
+                    type_params: vec![],
                 }),
             ),
         ]),

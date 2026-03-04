@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::body::to_bytes;
 use axum::extract::Request;
 use axum::http::{Method as HttpMethod, StatusCode};
 use axum::response::{IntoResponse, Response};
 use owo_colors::OwoColorize;
+use zehd_rune::value::Value;
 
 use crate::json::value_to_json;
 use crate::router::{Method, RouteTable};
@@ -18,7 +20,7 @@ pub async fn handle_request(
     let path = request.uri().path().to_string();
     let start = Instant::now();
 
-    let (status, response) = dispatch(request, &route_table);
+    let (status, response) = dispatch(request, &route_table).await;
 
     log_request(&method, &path, status, start.elapsed());
 
@@ -26,9 +28,30 @@ pub async fn handle_request(
 }
 
 /// Pure dispatch — resolves the route, executes the handler, returns status + response.
-fn dispatch(request: Request, route_table: &RouteTable) -> (StatusCode, Response) {
+async fn dispatch(request: Request, route_table: &RouteTable) -> (StatusCode, Response) {
+    // Extract request data before consuming the body.
+    let method_str = request.method().to_string();
     let url_path = request.uri().path().to_string();
+    let query_str = request.uri().query().unwrap_or("").to_string();
     let http_method = request.method().clone();
+
+    // Extract headers as key-value pairs.
+    let header_fields: Vec<(String, Value)> = request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                Value::String(value.to_str().unwrap_or("").to_string()),
+            )
+        })
+        .collect();
+
+    // Read body (consumes the request).
+    let body_bytes = to_bytes(request.into_body(), 1024 * 1024) // 1MB limit
+        .await
+        .unwrap_or_default();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
 
     // Look up the route
     let entry = match route_table.routes.get(&url_path) {
@@ -58,10 +81,34 @@ fn dispatch(request: Request, route_table: &RouteTable) -> (StatusCode, Response
         }
     };
 
+    // Build self value: { request: { ... }, response: { ... }, params: { } }
+    let self_value = Value::Object(vec![
+        (
+            "request".to_string(),
+            Value::Object(vec![
+                ("method".to_string(), Value::String(method_str)),
+                ("path".to_string(), Value::String(url_path.clone())),
+                ("headers".to_string(), Value::Object(header_fields)),
+                ("body".to_string(), Value::String(body_str)),
+                ("query".to_string(), Value::String(query_str)),
+            ]),
+        ),
+        (
+            "response".to_string(),
+            Value::Object(vec![
+                ("status".to_string(), Value::Int(200)),
+            ]),
+        ),
+        (
+            "params".to_string(),
+            Value::Object(vec![]),
+        ),
+    ]);
+
     // Lock VM and execute handler
     let result = {
         let mut vm = entry.vm.lock().unwrap();
-        vm.execute_handler(handler_index, &entry.context)
+        vm.execute_handler(handler_index, &entry.context, self_value)
     };
 
     match result {

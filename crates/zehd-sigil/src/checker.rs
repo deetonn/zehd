@@ -172,6 +172,13 @@ impl Checker {
                         if let Some(sym) = self.scopes.lookup_mut(self.current_scope, export_name) {
                             sym.ty = ty.clone();
                         }
+                        // If it's a named struct type, register it as a type definition
+                        // so it can be used as a type annotation (e.g. `const req: Request = ...`).
+                        if let Type::Struct(st) = ty {
+                            if st.name.is_some() {
+                                self.type_defs.insert(export_name.clone(), st.clone());
+                            }
+                        }
                     } else {
                         self.errors.push(
                             TypeError::error(
@@ -461,27 +468,22 @@ impl Checker {
             }
 
             ExprKind::SelfExpr => {
-                // self is a built-in object in handler context.
+                // Build self type from std::http module types.
+                let http_module = self.module_types.get("std::http");
+                let request_ty = http_module
+                    .and_then(|m| m.get("Request"))
+                    .cloned()
+                    .unwrap_or(Type::Error);
+                let response_ty = http_module
+                    .and_then(|m| m.get("Response"))
+                    .cloned()
+                    .unwrap_or(Type::Error);
+
                 Type::Struct(StructType {
-                    name: Some("Self".to_string()),
+                    name: Some("RouteContext".to_string()),
                     fields: vec![
-                        ("request".to_string(), Type::Struct(StructType {
-                            name: Some("HttpRequest".to_string()),
-                            fields: vec![
-                                ("method".to_string(), Type::String),
-                                ("path".to_string(), Type::String),
-                                ("headers".to_string(), Type::Map(Box::new(Type::String), Box::new(Type::String))),
-                                ("body".to_string(), Type::String),
-                            ],
-                            type_params: vec![],
-                        })),
-                        ("response".to_string(), Type::Struct(StructType {
-                            name: Some("HttpResponse".to_string()),
-                            fields: vec![
-                                ("status".to_string(), Type::Int),
-                            ],
-                            type_params: vec![],
-                        })),
+                        ("request".to_string(), request_ty),
+                        ("response".to_string(), response_ty),
                         ("params".to_string(), Type::Map(Box::new(Type::String), Box::new(Type::String))),
                     ],
                     type_params: vec![],

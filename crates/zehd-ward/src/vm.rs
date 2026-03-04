@@ -13,6 +13,7 @@ pub struct StackVm {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
     globals: Vec<Value>,
+    current_self: Option<Value>,
 }
 
 impl Default for StackVm {
@@ -27,6 +28,7 @@ impl StackVm {
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(64),
             globals: Vec::new(),
+            current_self: None,
         }
     }
 
@@ -89,6 +91,7 @@ impl StackVm {
         &mut self,
         handler_index: usize,
         context: &Context,
+        self_value: Value,
     ) -> Result<Value, RuntimeError> {
         let handler = context
             .module
@@ -104,6 +107,9 @@ impl StackVm {
 
         let local_count = handler.chunk.local_count as usize;
 
+        // Set self context for GetSelf opcode
+        self.current_self = Some(self_value);
+
         // No callee slot for handlers — push directly
         let stack_base = self.stack.len();
         for _ in 0..local_count {
@@ -117,7 +123,12 @@ impl StackVm {
         });
 
         // We need to execute the handler's chunk, not the main chunk
-        self.run_chunk(&handler.chunk, context)
+        let result = self.run_chunk(&handler.chunk, context);
+
+        // Clear self context after handler returns
+        self.current_self = None;
+
+        result
     }
 }
 
@@ -567,10 +578,103 @@ impl StackVm {
                         .push(Value::String(value_to_string(&val)));
                 }
 
+                // ── HTTP Context ─────────────────────────────────
+                Op::GetSelf => {
+                    let val = self.current_self.clone().ok_or_else(|| {
+                        RuntimeError::err(
+                            RuntimeErrorCode::R190,
+                            "self is not available outside of a handler context",
+                        )
+                        .span_from_chunk(chunk, ip)
+                        .build()
+                    })?;
+                    self.stack.push(val);
+                }
+
+                // ── Data Structures ─────────────────────────────────
+                Op::GetField => {
+                    let name_idx = self.read_u16(chunk)?;
+                    let name = match chunk.constants.get(name_idx as usize) {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R190,
+                                format!("field name constant {name_idx} is not a string"),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    };
+                    let obj = self.pop()?;
+                    match obj {
+                        Value::Object(fields) => {
+                            let val = fields
+                                .iter()
+                                .find(|(k, _)| k == &name)
+                                .map(|(_, v)| v.clone())
+                                .ok_or_else(|| {
+                                    RuntimeError::err(
+                                        RuntimeErrorCode::R120,
+                                        format!("object has no field '{name}'"),
+                                    )
+                                    .span_from_chunk(chunk, ip)
+                                    .build()
+                                })?;
+                            self.stack.push(val);
+                        }
+                        other => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R120,
+                                format!(
+                                    "cannot access field '{name}' on {}",
+                                    type_name(&other)
+                                ),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    }
+                }
+                Op::MakeObject => {
+                    let count = self.read_u16(chunk)? as usize;
+                    if self.stack.len() < count * 2 {
+                        return Err(RuntimeError::err(
+                            RuntimeErrorCode::R110,
+                            format!(
+                                "stack underflow: need {} values for MakeObject",
+                                count * 2
+                            ),
+                        )
+                        .build());
+                    }
+                    let start = self.stack.len() - count * 2;
+                    let mut fields = Vec::with_capacity(count);
+                    for i in 0..count {
+                        let key_idx = start + i * 2;
+                        let val_idx = start + i * 2 + 1;
+                        let key = match &self.stack[key_idx] {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                return Err(RuntimeError::err(
+                                    RuntimeErrorCode::R120,
+                                    format!(
+                                        "object key must be String, got {}",
+                                        type_name(other)
+                                    ),
+                                )
+                                .span_from_chunk(chunk, ip)
+                                .build());
+                            }
+                        };
+                        let val = self.stack[val_idx].clone();
+                        fields.push((key, val));
+                    }
+                    self.stack.truncate(start);
+                    self.stack.push(Value::Object(fields));
+                }
+
                 // ── Unimplemented (Session 2+) ───────────────────
                 Op::MakeList
-                | Op::MakeObject
-                | Op::GetField
                 | Op::SetField
                 | Op::GetIndex
                 | Op::SetIndex
@@ -582,8 +686,7 @@ impl StackVm {
                 | Op::MakeEnum
                 | Op::TestVariant
                 | Op::UnwrapVariant
-                | Op::TestEqual
-                | Op::GetSelf => {
+                | Op::TestEqual => {
                     return Err(RuntimeError::err(
                         RuntimeErrorCode::R140,
                         format!("unimplemented opcode: {op}"),

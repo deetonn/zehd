@@ -193,12 +193,26 @@ fn globals_persist_across_handler_calls() {
         vm.execute(chunk, &context).unwrap();
     }
 
+    let self_value = || Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String(String::new())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+
     // First handler call
-    let r1 = vm.execute_handler(0, &context).unwrap();
+    let r1 = vm.execute_handler(0, &context, self_value()).unwrap();
     assert_eq!(r1, Value::String("hi".into()));
 
     // Second handler call — globals should still be there
-    let r2 = vm.execute_handler(1, &context).unwrap();
+    let r2 = vm.execute_handler(1, &context, self_value()).unwrap();
     assert_eq!(r2, Value::String("hi".into()));
 }
 

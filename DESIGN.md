@@ -885,14 +885,14 @@ const port = env("PORT");               // returns Option<string>
 
 **Phase 1 (ships with PoC):**
 - `std` — core runtime APIs: `use()`, `proxy()`, `cors()`, `rateLimit()`, `env()`, `on()`, `copy()`, `provide<T>()`, `inject<T>()`
-- `std::types` — built-in type exports: `Response`, `Request`, etc.
+- `std::http` — HTTP types: `Request { method, path, headers, body, query }`, `Response { status }` — used by `self` in handlers
+- `std::types` — built-in type exports (aliases for common types)
 - `std::validation` — validation attributes
 - `std::json` — JSON serialization attributes
 - `std::log` — structured logging: `log.info()`, `log.error()`, `log.warn()`, `log.debug()`
 
 **Phase 2 (future):**
 - `std::db` — database access and mapping attributes
-- `std::http` — HTTP client for outbound requests
 - `std::crypto` — hashing, encryption, tokens
 - `std::auth` — authentication primitives
 
