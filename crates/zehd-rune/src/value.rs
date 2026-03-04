@@ -19,6 +19,13 @@ pub enum Value {
     Object(Vec<(String, Value)>),
     /// Index into CompiledModule.functions.
     Function(u16),
+    /// Enum variant (Option, Result, or user-defined).
+    /// Well-known sentinels: Option = 0xFFFE, Result = 0xFFFF.
+    Enum {
+        type_idx: u16,
+        variant_idx: u16,
+        payload: Option<Box<Value>>,
+    },
 }
 
 impl fmt::Display for Value {
@@ -51,6 +58,24 @@ impl fmt::Display for Value {
                 write!(f, " }}")
             }
             Value::Function(idx) => write!(f, "<fn:{idx}>"),
+            Value::Enum { type_idx, variant_idx, payload } => {
+                let type_name = match *type_idx {
+                    0xFFFE => "Option",
+                    0xFFFF => "Result",
+                    _ => "Enum",
+                };
+                let variant_name = match (*type_idx, *variant_idx) {
+                    (0xFFFE, 0) => "Some",
+                    (0xFFFE, 1) => "None",
+                    (0xFFFF, 0) => "Ok",
+                    (0xFFFF, 1) => "Err",
+                    (_, idx) => return write!(f, "{type_name}::v{idx}({payload:?})"),
+                };
+                match payload {
+                    Some(inner) => write!(f, "{variant_name}({inner})"),
+                    Option::None => write!(f, "{variant_name}"),
+                }
+            }
         }
     }
 }

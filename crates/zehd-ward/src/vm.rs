@@ -622,6 +622,18 @@ impl StackVm {
                                 })?;
                             self.stack.push(val);
                         }
+                        Value::List(items) => {
+                            if name == "length" {
+                                self.stack.push(Value::Int(items.len() as i64));
+                            } else {
+                                return Err(RuntimeError::err(
+                                    RuntimeErrorCode::R120,
+                                    format!("List has no field '{name}'"),
+                                )
+                                .span_from_chunk(chunk, ip)
+                                .build());
+                            }
+                        }
                         other => {
                             return Err(RuntimeError::err(
                                 RuntimeErrorCode::R120,
@@ -673,26 +685,291 @@ impl StackVm {
                     self.stack.push(Value::Object(fields));
                 }
 
-                // ── Unimplemented (Session 2+) ───────────────────
-                Op::MakeList
-                | Op::SetField
-                | Op::GetIndex
-                | Op::SetIndex
-                | Op::WrapSome
-                | Op::WrapOk
-                | Op::WrapErr
-                | Op::Unwrap
-                | Op::TryOp
-                | Op::MakeEnum
-                | Op::TestVariant
-                | Op::UnwrapVariant
-                | Op::TestEqual => {
-                    return Err(RuntimeError::err(
-                        RuntimeErrorCode::R140,
-                        format!("unimplemented opcode: {op}"),
-                    )
-                    .span_from_chunk(chunk, ip)
-                    .build());
+                // ── Lists ────────────────────────────────────────
+                Op::MakeList => {
+                    let count = self.read_u16(chunk)? as usize;
+                    if self.stack.len() < count {
+                        return Err(RuntimeError::err(
+                            RuntimeErrorCode::R110,
+                            format!("stack underflow: need {count} values for MakeList"),
+                        )
+                        .build());
+                    }
+                    let start = self.stack.len() - count;
+                    let items: Vec<Value> = self.stack.drain(start..).collect();
+                    self.stack.push(Value::List(items));
+                }
+                Op::GetIndex => {
+                    let idx_val = self.pop()?;
+                    let obj = self.pop()?;
+                    match (obj, idx_val) {
+                        (Value::List(items), Value::Int(i)) => {
+                            let index = if i < 0 { items.len() as i64 + i } else { i } as usize;
+                            let val = items.get(index).cloned().ok_or_else(|| {
+                                RuntimeError::err(
+                                    RuntimeErrorCode::R161,
+                                    format!("index {i} out of bounds (length {})", items.len()),
+                                )
+                                .span_from_chunk(chunk, ip)
+                                .build()
+                            })?;
+                            self.stack.push(val);
+                        }
+                        (Value::Object(fields), Value::String(key)) => {
+                            let val = fields
+                                .iter()
+                                .find(|(k, _)| k == &key)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or(Value::None);
+                            self.stack.push(val);
+                        }
+                        (obj, idx) => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R120,
+                                format!(
+                                    "cannot index {} with {}",
+                                    type_name(&obj),
+                                    type_name(&idx)
+                                ),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    }
+                }
+                Op::SetField => {
+                    let name_idx = self.read_u16(chunk)?;
+                    let name = match chunk.constants.get(name_idx as usize) {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R190,
+                                format!("field name constant {name_idx} is not a string"),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    };
+                    let obj = self.pop()?;
+                    let value = self.pop()?;
+                    match obj {
+                        Value::Object(mut fields) => {
+                            if let Some(entry) = fields.iter_mut().find(|(k, _)| k == &name) {
+                                entry.1 = value.clone();
+                            } else {
+                                fields.push((name, value.clone()));
+                            }
+                            self.stack.push(value);
+                        }
+                        other => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R120,
+                                format!("cannot set field on {}", type_name(&other)),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    }
+                }
+                Op::SetIndex => {
+                    let idx_val = self.pop()?;
+                    let obj = self.pop()?;
+                    let value = self.pop()?;
+                    match (obj, idx_val) {
+                        (Value::List(mut items), Value::Int(i)) => {
+                            let index = if i < 0 { items.len() as i64 + i } else { i } as usize;
+                            if index >= items.len() {
+                                return Err(RuntimeError::err(
+                                    RuntimeErrorCode::R161,
+                                    format!("index {i} out of bounds (length {})", items.len()),
+                                )
+                                .span_from_chunk(chunk, ip)
+                                .build());
+                            }
+                            items[index] = value.clone();
+                            self.stack.push(value);
+                        }
+                        (Value::Object(mut fields), Value::String(key)) => {
+                            if let Some(entry) = fields.iter_mut().find(|(k, _)| k == &key) {
+                                entry.1 = value.clone();
+                            } else {
+                                fields.push((key, value.clone()));
+                            }
+                            self.stack.push(value);
+                        }
+                        (obj, idx) => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R120,
+                                format!(
+                                    "cannot set index on {} with {}",
+                                    type_name(&obj),
+                                    type_name(&idx)
+                                ),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                    }
+                }
+
+                // ── Pattern Matching ────────────────────────────
+                Op::TestEqual => {
+                    let literal = self.pop()?;
+                    let scrutinee = self.pop()?;
+                    let equal = values_equal(&scrutinee, &literal);
+                    self.stack.push(Value::Bool(equal));
+                }
+
+                // ── Option/Result/Enum ──────────────────────────
+                Op::WrapSome => {
+                    let val = self.pop()?;
+                    self.stack.push(Value::Enum {
+                        type_idx: 0xFFFE,
+                        variant_idx: 0,
+                        payload: Some(Box::new(val)),
+                    });
+                }
+                Op::WrapOk => {
+                    let val = self.pop()?;
+                    self.stack.push(Value::Enum {
+                        type_idx: 0xFFFF,
+                        variant_idx: 0,
+                        payload: Some(Box::new(val)),
+                    });
+                }
+                Op::WrapErr => {
+                    let val = self.pop()?;
+                    self.stack.push(Value::Enum {
+                        type_idx: 0xFFFF,
+                        variant_idx: 1,
+                        payload: Some(Box::new(val)),
+                    });
+                }
+                Op::Unwrap => {
+                    let val = self.pop()?;
+                    match val {
+                        // Enum Some/Ok → push payload
+                        Value::Enum { type_idx: 0xFFFE, variant_idx: 0, payload }
+                        | Value::Enum { type_idx: 0xFFFF, variant_idx: 0, payload } => {
+                            self.stack.push(payload.map(|v| *v).unwrap_or(Value::Unit));
+                        }
+                        // Enum None → error
+                        Value::Enum { type_idx: 0xFFFE, variant_idx: 1, .. } | Value::None => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R160,
+                                "called unwrap on None",
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                        // Enum Err → error
+                        Value::Enum { type_idx: 0xFFFF, variant_idx: 1, payload } => {
+                            let msg = match payload {
+                                Some(inner) => format!("called unwrap on Err({})", value_to_string(&inner)),
+                                Option::None => "called unwrap on Err".to_string(),
+                            };
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R160,
+                                msg,
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build());
+                        }
+                        // Raw value (native fn interop) → pass through
+                        other => {
+                            self.stack.push(other);
+                        }
+                    }
+                }
+                Op::TryOp => {
+                    let val = self.pop()?;
+                    match val {
+                        // Ok/Some → unwrap and push payload
+                        Value::Enum { type_idx: 0xFFFE, variant_idx: 0, payload }
+                        | Value::Enum { type_idx: 0xFFFF, variant_idx: 0, payload } => {
+                            self.stack.push(payload.map(|v| *v).unwrap_or(Value::Unit));
+                        }
+                        // None → early-return None
+                        Value::Enum { type_idx: 0xFFFE, variant_idx: 1, .. } | Value::None => {
+                            // Early-return from current function with None
+                            let frame = self.frames.pop().ok_or_else(|| {
+                                RuntimeError::err(
+                                    RuntimeErrorCode::R190,
+                                    "try operator with no call frame",
+                                )
+                                .build()
+                            })?;
+                            self.stack.truncate(frame.stack_base.saturating_sub(1));
+                            if self.frames.len() <= entry_frame_depth || self.frames.is_empty() {
+                                return Ok(Value::None);
+                            }
+                            self.stack.push(Value::None);
+                        }
+                        // Err → early-return the Err
+                        Value::Enum { type_idx: 0xFFFF, variant_idx: 1, payload } => {
+                            let err_val = Value::Enum {
+                                type_idx: 0xFFFF,
+                                variant_idx: 1,
+                                payload,
+                            };
+                            let frame = self.frames.pop().ok_or_else(|| {
+                                RuntimeError::err(
+                                    RuntimeErrorCode::R190,
+                                    "try operator with no call frame",
+                                )
+                                .build()
+                            })?;
+                            self.stack.truncate(frame.stack_base.saturating_sub(1));
+                            if self.frames.len() <= entry_frame_depth || self.frames.is_empty() {
+                                return Ok(err_val);
+                            }
+                            self.stack.push(err_val);
+                        }
+                        // Raw non-None value (native fn interop) → pass through
+                        other => {
+                            self.stack.push(other);
+                        }
+                    }
+                }
+                Op::MakeEnum => {
+                    let type_idx = self.read_u16(chunk)?;
+                    let variant_idx = self.read_u16(chunk)?;
+                    let payload = self.pop()?;
+                    self.stack.push(Value::Enum {
+                        type_idx,
+                        variant_idx,
+                        payload: Some(Box::new(payload)),
+                    });
+                }
+                Op::TestVariant => {
+                    let type_idx = self.read_u16(chunk)?;
+                    let variant_idx = self.read_u16(chunk)?;
+                    let val = self.pop()?;
+                    let matches = match &val {
+                        Value::Enum { type_idx: t, variant_idx: v, .. } => {
+                            *t == type_idx && *v == variant_idx
+                        }
+                        // Value::None matches Option::None (0xFFFE, 1)
+                        Value::None => type_idx == 0xFFFE && variant_idx == 1,
+                        // Raw non-None value matches Option::Some (0xFFFE, 0) for native fn interop
+                        _ => type_idx == 0xFFFE && variant_idx == 0,
+                    };
+                    self.stack.push(Value::Bool(matches));
+                }
+                Op::UnwrapVariant => {
+                    let val = self.pop()?;
+                    match val {
+                        Value::Enum { payload, .. } => {
+                            self.stack.push(payload.map(|v| *v).unwrap_or(Value::Unit));
+                        }
+                        Value::None => {
+                            self.stack.push(Value::Unit);
+                        }
+                        // Raw value (implicitly Some) → pass through
+                        other => {
+                            self.stack.push(other);
+                        }
+                    }
                 }
             }
         }
@@ -923,6 +1200,9 @@ fn type_name(val: &Value) -> &'static str {
         Value::List(_) => "List",
         Value::Object(_) => "Object",
         Value::Function(_) => "Function",
+        Value::Enum { type_idx: 0xFFFE, .. } => "Option",
+        Value::Enum { type_idx: 0xFFFF, .. } => "Result",
+        Value::Enum { .. } => "Enum",
     }
 }
 
@@ -947,6 +1227,38 @@ fn value_to_string(val: &Value) -> String {
             format!("{{ {} }}", inner.join(", "))
         }
         Value::Function(idx) => format!("<fn:{idx}>"),
+        Value::Enum { type_idx, variant_idx, payload } => {
+            match (*type_idx, *variant_idx) {
+                (0xFFFE, 0) => match payload {
+                    Some(inner) => format!("Some({})", value_to_string(inner)),
+                    Option::None => "Some(())".to_string(),
+                },
+                (0xFFFE, 1) => "None".to_string(),
+                (0xFFFF, 0) => match payload {
+                    Some(inner) => format!("Ok({})", value_to_string(inner)),
+                    Option::None => "Ok(())".to_string(),
+                },
+                (0xFFFF, 1) => match payload {
+                    Some(inner) => format!("Err({})", value_to_string(inner)),
+                    Option::None => "Err(())".to_string(),
+                },
+                _ => format!("Enum({type_idx}::{variant_idx})"),
+            }
+        }
+    }
+}
+
+/// Compare two values for equality in pattern matching context.
+/// Different types are never equal (no implicit coercion).
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::None, Value::None) => true,
+        (Value::Unit, Value::Unit) => true,
+        _ => false,
     }
 }
 

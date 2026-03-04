@@ -36,6 +36,37 @@ pub fn value_to_json(value: &Value) -> Option<JsonValue> {
             Some(JsonValue::Object(map))
         }
         Value::Function(_) => Some(JsonValue::Null),
+        Value::Enum { type_idx, variant_idx, payload } => {
+            match (*type_idx, *variant_idx) {
+                // Option::None → JSON null
+                (0xFFFE, 1) => Some(JsonValue::Null),
+                // Option::Some / Result::Ok → unwrap payload
+                (0xFFFE, 0) | (0xFFFF, 0) => {
+                    match payload {
+                        Some(inner) => value_to_json(inner).or(Some(JsonValue::Null)),
+                        None => Some(JsonValue::Null),
+                    }
+                }
+                // Result::Err → serialize as { "error": payload }
+                (0xFFFF, 1) => {
+                    let mut map = serde_json::Map::new();
+                    let inner = payload.as_ref()
+                        .map(|v| value_to_json(v).unwrap_or(JsonValue::Null))
+                        .unwrap_or(JsonValue::Null);
+                    map.insert("error".to_string(), inner);
+                    Some(JsonValue::Object(map))
+                }
+                // User-defined enums → serialize as { "variant": variant_idx, "value": payload }
+                _ => {
+                    let mut map = serde_json::Map::new();
+                    map.insert("variant".to_string(), JsonValue::from(*variant_idx));
+                    if let Some(inner) = payload {
+                        map.insert("value".to_string(), value_to_json(inner).unwrap_or(JsonValue::Null));
+                    }
+                    Some(JsonValue::Object(map))
+                }
+            }
+        }
     }
 }
 

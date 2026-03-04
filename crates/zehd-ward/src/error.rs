@@ -24,6 +24,10 @@ pub enum RuntimeErrorCode {
     R151,
     /// Function index out of bounds.
     R152,
+    /// Unwrap failed (None or Err).
+    R160,
+    /// Index out of bounds.
+    R161,
     /// Internal VM error.
     R190,
 }
@@ -40,6 +44,8 @@ impl fmt::Display for RuntimeErrorCode {
             RuntimeErrorCode::R150 => "R150",
             RuntimeErrorCode::R151 => "R151",
             RuntimeErrorCode::R152 => "R152",
+            RuntimeErrorCode::R160 => "R160",
+            RuntimeErrorCode::R161 => "R161",
             RuntimeErrorCode::R190 => "R190",
         };
         write!(f, "{s}")
