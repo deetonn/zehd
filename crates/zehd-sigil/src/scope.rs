@@ -69,6 +69,29 @@ impl ScopeArena {
         None
     }
 
+    /// Mutable lookup — find a symbol and return a mutable reference.
+    pub fn lookup_mut(&mut self, scope_id: ScopeId, name: &str) -> Option<&mut Symbol> {
+        // First, find which scope contains the symbol.
+        let target_scope = {
+            let mut current = scope_id;
+            loop {
+                let scope = self.get(current);
+                if scope.symbols.contains_key(name) {
+                    break Some(current);
+                }
+                match scope.parent {
+                    Some(parent) => current = parent,
+                    None => break None,
+                }
+            }
+        };
+        if let Some(sid) = target_scope {
+            self.get_mut(sid).symbols.get_mut(name)
+        } else {
+            None
+        }
+    }
+
     /// Mark a symbol as used. Returns true if the symbol was found.
     pub fn mark_used(&mut self, scope_id: ScopeId, name: &str) -> bool {
         let scope = self.get_mut(scope_id);

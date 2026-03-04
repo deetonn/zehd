@@ -13,7 +13,7 @@ pub fn check_ok(source: &str) -> CheckResult {
             format_errors_parse(&parse_result.errors, source)
         );
     }
-    let result = zehd_sigil::check(&parse_result.program, source);
+    let result = zehd_sigil::check(&parse_result.program, source, &Default::default());
     if result.has_errors() {
         panic!(
             "type errors:\n{}",
@@ -32,7 +32,7 @@ pub fn check_with_errors(source: &str) -> CheckResult {
             format_errors_parse(&parse_result.errors, source)
         );
     }
-    zehd_sigil::check(&parse_result.program, source)
+    zehd_sigil::check(&parse_result.program, source, &Default::default())
 }
 
 /// Parse and type-check, return just the type table.

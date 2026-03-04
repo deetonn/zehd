@@ -3,6 +3,7 @@ pub mod compiler;
 pub mod error;
 pub mod module;
 pub mod op;
+pub mod registry;
 pub mod value;
 
 use zehd_codex::ast::Program;
@@ -11,6 +12,7 @@ use zehd_sigil::CheckResult;
 use compiler::Compiler;
 use error::CompileError;
 use module::CompiledModule;
+use registry::NativeRegistry;
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -48,12 +50,16 @@ impl CompileResult {
 ///
 /// Panics if `check_result` contains type errors. Always check
 /// `check_result.is_ok()` before calling this.
-pub fn compile(program: &Program, check_result: CheckResult) -> CompileResult {
+pub fn compile(
+    program: &Program,
+    check_result: CheckResult,
+    native_registry: &NativeRegistry,
+) -> CompileResult {
     // Take the optimized program out, falling back to the original.
     let optimized = check_result.optimized_program.clone();
     let target = optimized.as_ref().unwrap_or(program);
 
-    let compiler = Compiler::new(check_result);
+    let compiler = Compiler::new(check_result, native_registry.clone());
     let (module, errors) = compiler.compile(target);
 
     CompileResult { module, errors }

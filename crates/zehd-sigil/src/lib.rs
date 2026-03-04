@@ -6,6 +6,8 @@ pub mod resolve;
 pub mod scope;
 pub mod types;
 
+use std::collections::HashMap;
+
 use zehd_codex::ast::Program;
 
 use checker::{Checker, TypeTable};
@@ -13,6 +15,10 @@ use error::TypeError;
 use optimize::Optimizer;
 use resolve::Resolver;
 use scope::ScopeArena;
+use types::Type;
+
+/// Maps module path (e.g. `"std"`, `"std::log"`) to its exported names and types.
+pub type ModuleTypes = HashMap<String, HashMap<String, Type>>;
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -55,13 +61,13 @@ impl CheckResult {
 ///
 /// The input `program` is not consumed. The optimized version (if any) is
 /// returned in `CheckResult.optimized_program`.
-pub fn check(program: &Program, _source: &str) -> CheckResult {
+pub fn check(program: &Program, _source: &str, module_types: &ModuleTypes) -> CheckResult {
     // Pass 1: Resolve names.
     let resolver = Resolver::new();
     let resolve_result = resolver.resolve(program);
 
     // Pass 2: Type check.
-    let checker = Checker::new(resolve_result);
+    let checker = Checker::new(resolve_result, module_types.clone());
     let checker_result = checker.check(program);
 
     let mut errors = checker_result.errors;

@@ -98,6 +98,8 @@ pub enum Op {
     Return = 0x61,
     /// Push closure. Operand: u16 function index.
     Closure = 0x62,
+    /// Call a native (Rust) function. Operands: u16 native_fn_id + u8 arg_count.
+    CallNative = 0x63,
 
     // ── Data Structures (0x70–0x7F) ─────────────────────────────
     /// Create list from N stack values. Operand: u16 count.
@@ -209,6 +211,7 @@ impl Op {
             0x60 => Some(Op::Call),
             0x61 => Some(Op::Return),
             0x62 => Some(Op::Closure),
+            0x63 => Some(Op::CallNative),
 
             0x70 => Some(Op::MakeList),
             0x71 => Some(Op::MakeObject),
@@ -259,6 +262,9 @@ impl Op {
 
             // u8 operand
             Op::Call => 1,
+
+            // u16 + u8 operand (native_fn_id + arg_count)
+            Op::CallNative => 3,
 
             // Two u16 operands (type_idx + variant_idx)
             Op::MakeEnum | Op::TestVariant => 4,
@@ -319,6 +325,7 @@ impl fmt::Display for Op {
             Op::Call => "Call",
             Op::Return => "Return",
             Op::Closure => "Closure",
+            Op::CallNative => "CallNative",
             Op::MakeList => "MakeList",
             Op::MakeObject => "MakeObject",
             Op::GetField => "GetField",
@@ -363,6 +370,7 @@ pub enum Instruction {
     U16(Op, u16),
     U8(Op, u8),
     U16U16(Op, u16, u16),
+    U16U8(Op, u16, u8),
 }
 
 impl fmt::Display for Instruction {
@@ -372,6 +380,7 @@ impl fmt::Display for Instruction {
             Instruction::U16(op, val) => write!(f, "{op}({val})"),
             Instruction::U8(op, val) => write!(f, "{op}({val})"),
             Instruction::U16U16(op, a, b) => write!(f, "{op}({a}, {b})"),
+            Instruction::U16U8(op, a, b) => write!(f, "{op}({a}, {b})"),
         }
     }
 }
@@ -396,6 +405,12 @@ pub fn decode_ops(code: &[u8]) -> Vec<Instruction> {
                 let val = decode_u16(code[i], code[i + 1]);
                 i += 2;
                 result.push(Instruction::U16(op, val));
+            }
+            3 => {
+                let a = decode_u16(code[i], code[i + 1]);
+                let b = code[i + 2];
+                i += 3;
+                result.push(Instruction::U16U8(op, a, b));
             }
             4 => {
                 let a = decode_u16(code[i], code[i + 1]);

@@ -115,6 +115,16 @@ impl ChunkBuilder {
         self.code.push(operand);
     }
 
+    /// Emit an opcode with a u16 operand followed by a u8 operand.
+    pub fn emit_u16_u8(&mut self, op: Op, a: u16, b: u8, span: Span) {
+        self.record_span(span);
+        self.code.push(op as u8);
+        let a_bytes = encode_u16(a);
+        self.code.push(a_bytes[0]);
+        self.code.push(a_bytes[1]);
+        self.code.push(b);
+    }
+
     /// Emit an opcode with two u16 operands.
     pub fn emit_u16_u16(&mut self, op: Op, a: u16, b: u16, span: Span) {
         self.record_span(span);

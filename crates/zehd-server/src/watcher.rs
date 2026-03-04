@@ -6,6 +6,9 @@ use arc_swap::ArcSwap;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use owo_colors::OwoColorize;
 use tokio::sync::mpsc;
+use zehd_rune::registry::NativeRegistry;
+use zehd_sigil::ModuleTypes;
+use zehd_ward::NativeFn;
 
 use crate::compile;
 use crate::discover;
@@ -22,6 +25,9 @@ use crate::router::RouteTable;
 pub fn spawn(
     routes_dir: PathBuf,
     route_table: Arc<ArcSwap<RouteTable>>,
+    module_types: ModuleTypes,
+    native_registry: NativeRegistry,
+    native_fns: Arc<Vec<NativeFn>>,
 ) -> Result<RecommendedWatcher, StartupError> {
     let (tx, rx) = mpsc::channel::<notify::Event>(64);
 
@@ -44,7 +50,14 @@ pub fn spawn(
         .map_err(|source| StartupError::WatcherError { source })?;
 
     // Spawn the async reload loop.
-    tokio::spawn(watch_loop(rx, routes_dir, route_table));
+    tokio::spawn(watch_loop(
+        rx,
+        routes_dir,
+        route_table,
+        module_types,
+        native_registry,
+        native_fns,
+    ));
 
     Ok(watcher)
 }
@@ -54,6 +67,9 @@ async fn watch_loop(
     mut rx: mpsc::Receiver<notify::Event>,
     routes_dir: PathBuf,
     route_table: Arc<ArcSwap<RouteTable>>,
+    module_types: ModuleTypes,
+    native_registry: NativeRegistry,
+    native_fns: Arc<Vec<NativeFn>>,
 ) {
     loop {
         // Wait for the first event.
@@ -96,7 +112,8 @@ async fn watch_loop(
             }
         };
 
-        let (compiled, errors) = compile::compile_routes(routes);
+        let (compiled, errors) =
+            compile::compile_routes(routes, &module_types, &native_registry);
 
         if !errors.is_empty() {
             for err in &errors {
@@ -115,7 +132,7 @@ async fn watch_loop(
             continue;
         }
 
-        match RouteTable::build(compiled) {
+        match RouteTable::build(compiled, Arc::clone(&native_fns)) {
             Ok(new_table) => {
                 route_table.store(Arc::new(new_table));
                 let ms = start.elapsed().as_millis();

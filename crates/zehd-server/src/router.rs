@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use zehd_codex::ast::HttpMethod as ZehdMethod;
 use zehd_ward::vm::StackVm;
-use zehd_ward::{Context, VmBackend};
+use zehd_ward::{Context, NativeFn, VmBackend};
 
 use crate::compile::CompiledRoute;
 use crate::error::StartupError;
@@ -83,7 +83,10 @@ impl RouteTable {
     /// 2. Create a fresh VM
     /// 3. Run server_init to populate globals
     /// 4. Wrap in Arc<RouteEntry>
-    pub fn build(compiled_routes: Vec<CompiledRoute>) -> Result<Self, StartupError> {
+    pub fn build(
+        compiled_routes: Vec<CompiledRoute>,
+        native_fns: Arc<Vec<NativeFn>>,
+    ) -> Result<Self, StartupError> {
         let mut routes = HashMap::new();
 
         for route in compiled_routes {
@@ -104,6 +107,7 @@ impl RouteTable {
 
             let context = Context {
                 module: route.module,
+                native_fns: Arc::clone(&native_fns),
             };
 
             let mut vm = StackVm::new();

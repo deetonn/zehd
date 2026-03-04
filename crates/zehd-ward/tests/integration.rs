@@ -1,6 +1,10 @@
 mod helpers;
 
+use std::sync::Arc;
+
+use zehd_rune::registry::NativeRegistry;
 use zehd_rune::value::Value;
+use zehd_sigil::ModuleTypes;
 
 // ── Server Init + Handler ──────────────────────────────────────
 
@@ -180,7 +184,7 @@ fn globals_persist_across_handler_calls() {
         }
         "#,
     );
-    let context = zehd_ward::Context { module };
+    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]) };
     let mut vm = zehd_ward::vm::StackVm::new();
 
     // Run server_init to set up globals
@@ -196,4 +200,173 @@ fn globals_persist_across_handler_calls() {
     // Second handler call — globals should still be there
     let r2 = vm.execute_handler(1, &context).unwrap();
     assert_eq!(r2, Value::String("hi".into()));
+}
+
+// ── Native Function Calls ────────────────────────────────────────
+
+/// Helper: compile with module types and native registry.
+fn compile_with_natives(
+    source: &str,
+    module_types: &ModuleTypes,
+    native_registry: &NativeRegistry,
+) -> zehd_rune::module::CompiledModule {
+    let parse_result = zehd_codex::parse(source);
+    if !parse_result.is_ok() {
+        let msgs: Vec<String> =
+            parse_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("parse errors:\n{}", msgs.join("\n"));
+    }
+    let check_result =
+        zehd_sigil::check(&parse_result.program, source, module_types);
+    if check_result.has_errors() {
+        let msgs: Vec<String> =
+            check_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("type errors:\n{}", msgs.join("\n"));
+    }
+    let compile_result =
+        zehd_rune::compile(&parse_result.program, check_result, native_registry);
+    if compile_result.has_errors() {
+        let msgs: Vec<String> =
+            compile_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("compile errors:\n{}", msgs.join("\n"));
+    }
+    compile_result.module
+}
+
+#[test]
+fn native_function_call() {
+    use std::collections::HashMap;
+    use zehd_sigil::types::{FunctionType, Type};
+
+    // Set up a test native function: add_one(n: int) -> int
+    let mut module_types = ModuleTypes::new();
+    module_types.insert(
+        "std::test".to_string(),
+        HashMap::from([(
+            "add_one".to_string(),
+            Type::Function(FunctionType {
+                params: vec![Type::Int],
+                return_type: Box::new(Type::Int),
+            }),
+        )]),
+    );
+
+    let mut native_registry = NativeRegistry::new();
+    native_registry.register("std::test", "add_one", 0);
+
+    let native_fns: Vec<zehd_ward::NativeFn> = vec![|args| {
+        match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Int(n + 1)),
+            _ => Err(zehd_ward::error::RuntimeError::err(
+                zehd_ward::error::RuntimeErrorCode::R120,
+                "expected int",
+            )
+            .build()),
+        }
+    }];
+
+    let module = compile_with_natives(
+        r#"
+        import { add_one } from std::test;
+        fn test_it(x: int): int {
+            add_one(x)
+        }
+        "#,
+        &module_types,
+        &native_registry,
+    );
+
+    let context = zehd_ward::Context {
+        module,
+        native_fns: Arc::new(native_fns),
+    };
+    let mut vm = zehd_ward::vm::StackVm::new();
+    let result = vm
+        .call_function(0, vec![Value::Int(41)], &context)
+        .unwrap();
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn native_env_returns_none_for_missing() {
+    use std::collections::HashMap;
+    use zehd_sigil::types::{FunctionType, Type};
+
+    let mut module_types = ModuleTypes::new();
+    module_types.insert(
+        "std".to_string(),
+        HashMap::from([(
+            "env".to_string(),
+            Type::Function(FunctionType {
+                params: vec![Type::String],
+                return_type: Box::new(Type::Option(Box::new(Type::String))),
+            }),
+        )]),
+    );
+
+    let mut native_registry = NativeRegistry::new();
+    native_registry.register("std", "env", 0);
+
+    let native_fns: Vec<zehd_ward::NativeFn> = vec![|args| match args.first() {
+        Some(Value::String(key)) => match std::env::var(key) {
+            Ok(val) => Ok(Value::String(val)),
+            Err(_) => Ok(Value::None),
+        },
+        _ => Ok(Value::None),
+    }];
+
+    let module = compile_with_natives(
+        r#"
+        import { env } from std;
+        fn get_env(): Option<string> {
+            env("ZEHD_TEST_NONEXISTENT_VAR_12345")
+        }
+        "#,
+        &module_types,
+        &native_registry,
+    );
+
+    let context = zehd_ward::Context {
+        module,
+        native_fns: Arc::new(native_fns),
+    };
+    let mut vm = zehd_ward::vm::StackVm::new();
+    let result = vm.call_function(0, vec![], &context).unwrap();
+    assert_eq!(result, Value::None);
+}
+
+#[test]
+fn import_unknown_module_errors() {
+    let source = r#"import { foo } from std::fake;"#;
+    let parse_result = zehd_codex::parse(source);
+    assert!(parse_result.is_ok());
+    let check_result =
+        zehd_sigil::check(&parse_result.program, source, &Default::default());
+    assert!(check_result.has_errors());
+    assert!(check_result
+        .errors
+        .iter()
+        .any(|e| e.code.to_string() == "T103"));
+}
+
+#[test]
+fn import_unknown_export_errors() {
+    use std::collections::HashMap;
+    use zehd_sigil::types::Type;
+
+    let mut module_types = ModuleTypes::new();
+    module_types.insert("std".to_string(), HashMap::from([
+        ("env".to_string(), Type::Unit),
+    ]));
+
+    let source = r#"import { nonexistent } from std;"#;
+    let parse_result = zehd_codex::parse(source);
+    assert!(parse_result.is_ok());
+    let check_result =
+        zehd_sigil::check(&parse_result.program, source, &module_types);
+    assert!(check_result.has_errors());
+    assert!(check_result
+        .errors
+        .iter()
+        .any(|e| e.code.to_string() == "T103"));
 }

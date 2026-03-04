@@ -1,4 +1,6 @@
 use zehd_rune::module::CompiledModule;
+use zehd_rune::registry::NativeRegistry;
+use zehd_sigil::ModuleTypes;
 
 use crate::discover::DiscoveredRoute;
 use crate::error::RouteCompileError;
@@ -15,12 +17,14 @@ pub struct CompiledRoute {
 /// should refuse to start the server.
 pub fn compile_routes(
     routes: Vec<DiscoveredRoute>,
+    module_types: &ModuleTypes,
+    native_registry: &NativeRegistry,
 ) -> (Vec<CompiledRoute>, Vec<RouteCompileError>) {
     let mut compiled = Vec::new();
     let mut errors = Vec::new();
 
     for route in routes {
-        match compile_one(&route) {
+        match compile_one(&route, module_types, native_registry) {
             Ok(module) => {
                 compiled.push(CompiledRoute {
                     url_path: route.url_path,
@@ -42,7 +46,11 @@ pub fn compile_routes(
 
 /// Run a single source through parse → check → compile.
 /// Returns the compiled module or a list of error messages.
-fn compile_one(route: &DiscoveredRoute) -> Result<CompiledModule, Vec<String>> {
+fn compile_one(
+    route: &DiscoveredRoute,
+    module_types: &ModuleTypes,
+    native_registry: &NativeRegistry,
+) -> Result<CompiledModule, Vec<String>> {
     // Phase 1: Parse
     let parse_result = zehd_codex::parse(&route.source);
     if !parse_result.is_ok() {
@@ -55,7 +63,8 @@ fn compile_one(route: &DiscoveredRoute) -> Result<CompiledModule, Vec<String>> {
     }
 
     // Phase 2: Type check
-    let check_result = zehd_sigil::check(&parse_result.program, &route.source);
+    let check_result =
+        zehd_sigil::check(&parse_result.program, &route.source, module_types);
     if check_result.has_errors() {
         let messages: Vec<String> = check_result
             .errors
@@ -67,7 +76,8 @@ fn compile_one(route: &DiscoveredRoute) -> Result<CompiledModule, Vec<String>> {
     }
 
     // Phase 3: Compile to bytecode
-    let compile_result = zehd_rune::compile(&parse_result.program, check_result);
+    let compile_result =
+        zehd_rune::compile(&parse_result.program, check_result, native_registry);
     if compile_result.has_errors() {
         let messages: Vec<String> = compile_result
             .errors

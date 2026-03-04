@@ -14,14 +14,14 @@ pub fn compile_ok(source: &str) -> CompileResult {
             format_parse_errors(&parse_result.errors)
         );
     }
-    let check_result = zehd_sigil::check(&parse_result.program, source);
+    let check_result = zehd_sigil::check(&parse_result.program, source, &Default::default());
     if check_result.has_errors() {
         panic!(
             "type errors:\n{}",
             format_type_errors(&check_result.errors)
         );
     }
-    let result = zehd_rune::compile(&parse_result.program, check_result);
+    let result = zehd_rune::compile(&parse_result.program, check_result, &Default::default());
     if result.has_errors() {
         panic!(
             "compile errors:\n{}",
@@ -41,14 +41,14 @@ pub fn compile_with_errors(source: &str) -> CompileResult {
             format_parse_errors(&parse_result.errors)
         );
     }
-    let check_result = zehd_sigil::check(&parse_result.program, source);
+    let check_result = zehd_sigil::check(&parse_result.program, source, &Default::default());
     if check_result.has_errors() {
         panic!(
             "type errors:\n{}",
             format_type_errors(&check_result.errors)
         );
     }
-    zehd_rune::compile(&parse_result.program, check_result)
+    zehd_rune::compile(&parse_result.program, check_result, &Default::default())
 }
 
 /// Get the compiled module from a source string.

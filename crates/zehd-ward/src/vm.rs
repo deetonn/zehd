@@ -495,6 +495,29 @@ impl StackVm {
                     let arg_count = self.read_u8(chunk)?;
                     self.call_value(arg_count, context, main_chunk)?;
                 }
+                Op::CallNative => {
+                    let native_id = self.read_u16(chunk)?;
+                    let arg_count = self.read_u8(chunk)?;
+
+                    // Pop arguments from the stack.
+                    let start = self.stack.len().saturating_sub(arg_count as usize);
+                    let args: Vec<Value> = self.stack.drain(start..).collect();
+
+                    let func = context
+                        .native_fns
+                        .get(native_id as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::err(
+                                RuntimeErrorCode::R152,
+                                format!("native function id {native_id} out of bounds"),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build()
+                        })?;
+
+                    let result = func(&args)?;
+                    self.stack.push(result);
+                }
                 Op::Return => {
                     let result = self.pop().unwrap_or(Value::Unit);
                     let frame = self.frames.pop().ok_or_else(|| {

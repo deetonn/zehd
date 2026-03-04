@@ -98,7 +98,7 @@ pub fn compute(uri: &Url, source: &str) -> Vec<Diagnostic> {
     }
 
     // Only run type-check if parse produced an AST (it always does, but may be partial).
-    let check_result = zehd_sigil::check(&parse_result.program, source);
+    let check_result = zehd_sigil::check(&parse_result.program, source, &Default::default());
 
     for err in &check_result.errors {
         let severity = match err.severity {

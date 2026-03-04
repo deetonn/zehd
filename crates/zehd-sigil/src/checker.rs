@@ -8,6 +8,7 @@ use crate::infer::InferCtx;
 use crate::resolve::ResolveResult;
 use crate::scope::*;
 use crate::types::*;
+use crate::ModuleTypes;
 
 // ── Type Table ──────────────────────────────────────────────────
 
@@ -27,10 +28,12 @@ pub struct Checker {
     return_type: Option<Type>,
     /// Resolved user-defined type definitions (name → StructType with fields).
     type_defs: HashMap<String, StructType>,
+    /// Module type registry — maps module path → exported name → Type.
+    module_types: ModuleTypes,
 }
 
 impl Checker {
-    pub fn new(resolve_result: ResolveResult) -> Self {
+    pub fn new(resolve_result: ResolveResult, module_types: ModuleTypes) -> Self {
         Self {
             types: HashMap::new(),
             infer: InferCtx::new(),
@@ -40,6 +43,7 @@ impl Checker {
             current_scope: 0, // module scope
             return_type: None,
             type_defs: HashMap::new(),
+            module_types,
         }
     }
 
@@ -130,7 +134,9 @@ impl Checker {
 
     fn check_item(&mut self, item: &Item) {
         match &item.kind {
-            ItemKind::Import(_) => {}
+            ItemKind::Import(imp) => {
+                self.check_import(imp);
+            }
             ItemKind::TypeDef(_) => {} // already handled in collect_type_defs
             ItemKind::EnumDef(_) => {}
             ItemKind::Function(f) => self.check_function(f),
@@ -140,6 +146,55 @@ impl Checker {
             ItemKind::ErrorHandler(e) => self.check_error_handler(e),
             ItemKind::ExprStmt(es) => {
                 self.check_expr(&es.expr);
+            }
+        }
+    }
+
+    fn check_import(&mut self, imp: &ImportItem) {
+        // Build module path from segments: ["std", "log"] → "std::log"
+        let module_path = imp
+            .path
+            .segments
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Look up the module in the registry.
+        let module_exports = self.module_types.get(&module_path);
+
+        for name in &imp.names {
+            let export_name = &name.name.name;
+            match module_exports {
+                Some(exports) => {
+                    if let Some(ty) = exports.get(export_name) {
+                        // Update the symbol's type in the current scope.
+                        if let Some(sym) = self.scopes.lookup_mut(self.current_scope, export_name) {
+                            sym.ty = ty.clone();
+                        }
+                    } else {
+                        self.errors.push(
+                            TypeError::error(
+                                TypeErrorCode::T103,
+                                format!("'{export_name}' is not exported by module '{module_path}'"),
+                                name.span,
+                            )
+                            .build(),
+                        );
+                    }
+                }
+                None => {
+                    self.errors.push(
+                        TypeError::error(
+                            TypeErrorCode::T103,
+                            format!("unknown module '{module_path}'"),
+                            imp.path.span,
+                        )
+                        .build(),
+                    );
+                    // Only report "unknown module" once per import statement.
+                    return;
+                }
             }
         }
     }

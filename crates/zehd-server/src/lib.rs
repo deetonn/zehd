@@ -3,6 +3,7 @@ mod discover;
 mod handler;
 mod json;
 mod router;
+mod std_lib;
 mod watcher;
 
 pub mod config;
@@ -27,6 +28,10 @@ use router::RouteTable;
 pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     let start_time = Instant::now();
 
+    // 0. Build standard library
+    let (module_types, native_registry, native_fns) = std_lib::build_std();
+    let native_fns = Arc::new(native_fns);
+
     // 1. Discover route files
     let routes = discover::discover_routes(&options.routes_dir)?;
 
@@ -39,7 +44,8 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     }
 
     // 2. Compile all routes
-    let (compiled, errors) = compile::compile_routes(routes);
+    let (compiled, errors) =
+        compile::compile_routes(routes, &module_types, &native_registry);
 
     if !errors.is_empty() {
         // Print each error before failing
@@ -64,7 +70,7 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     }
 
     // 3. Build route table (runs server_init for each route)
-    let route_table = RouteTable::build(compiled)?;
+    let route_table = RouteTable::build(compiled, Arc::clone(&native_fns))?;
 
     // 4. Collect route info for the banner
     let mut route_lines: Vec<(String, String)> = Vec::new();
@@ -99,7 +105,13 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     })?;
 
     // 8. Spawn filesystem watcher for hot-reload
-    let _watcher = watcher::spawn(options.routes_dir.clone(), Arc::clone(&route_table))?;
+    let _watcher = watcher::spawn(
+        options.routes_dir.clone(),
+        Arc::clone(&route_table),
+        module_types,
+        native_registry,
+        Arc::clone(&native_fns),
+    )?;
 
     let elapsed = start_time.elapsed();
 

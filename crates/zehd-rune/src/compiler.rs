@@ -11,6 +11,7 @@ use crate::chunk::{Chunk, ChunkBuilder};
 use crate::error::*;
 use crate::module::*;
 use crate::op::Op;
+use crate::registry::{NativeFnId, NativeRegistry};
 use crate::value::Value;
 
 // ── Local Variable ─────────────────────────────────────────────
@@ -76,10 +77,14 @@ pub struct Compiler {
     enum_variant_indices: HashMap<(String, String), u16>,
     /// Next enum type index to assign.
     next_enum_type_index: u16,
+    /// Native function registry (module_path, name) → NativeFnId.
+    native_registry: NativeRegistry,
+    /// Imported native function names → NativeFnId (populated from imports).
+    native_imports: HashMap<String, NativeFnId>,
 }
 
 impl Compiler {
-    pub fn new(check_result: CheckResult) -> Self {
+    pub fn new(check_result: CheckResult, native_registry: NativeRegistry) -> Self {
         Self {
             types: check_result.types,
             errors: Vec::new(),
@@ -93,11 +98,16 @@ impl Compiler {
             enum_type_indices: HashMap::new(),
             enum_variant_indices: HashMap::new(),
             next_enum_type_index: 0,
+            native_registry,
+            native_imports: HashMap::new(),
         }
     }
 
     /// Compile a type-checked program into a CompiledModule and any errors.
     pub fn compile(mut self, program: &Program) -> (CompiledModule, Vec<CompileError>) {
+        // Pre-pass 0: collect native imports from import statements.
+        self.collect_native_imports(&program.items);
+
         // Pre-pass 1: assign enum type/variant indices.
         self.collect_enum_indices(&program.items);
 
@@ -159,6 +169,28 @@ impl Compiler {
                     index,
                 });
                 index += 1;
+            }
+        }
+    }
+
+    fn collect_native_imports(&mut self, items: &[Item]) {
+        for item in items {
+            if let ItemKind::Import(imp) = &item.kind {
+                let module_path = imp
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+
+                for name in &imp.names {
+                    if let Some(id) =
+                        self.native_registry.lookup(&module_path, &name.name.name)
+                    {
+                        self.native_imports.insert(name.name.name.clone(), id);
+                    }
+                }
             }
         }
     }
@@ -761,6 +793,20 @@ impl Compiler {
             ExprKind::Call {
                 callee, args, ..
             } => {
+                // Check if the callee is a native import.
+                if let ExprKind::Ident(name) = &callee.kind {
+                    if let Some(&native_id) = self.native_imports.get(&name.name) {
+                        // Emit args, then CallNative.
+                        for arg in args {
+                            self.compile_expr(arg);
+                        }
+                        let arg_count = args.len().min(u8::MAX as usize) as u8;
+                        self.builder
+                            .emit_u16_u8(Op::CallNative, native_id, arg_count, expr.span);
+                        return;
+                    }
+                }
+
                 self.compile_expr(callee);
                 for arg in args {
                     self.compile_expr(arg);
