@@ -122,12 +122,12 @@ fn inject_returns_declared_type() {
 }
 
 #[test]
-fn provide_unknown_type_acts_as_opaque_key() {
-    // AppName isn't a known type, so it acts as an opaque DI key
-    // and the value is not type-checked against it.
+fn provide_unknown_type_errors() {
+    // AppName isn't a known type — must produce T101
     let source = r#"
         import { provide } from std;
         provide<AppName>("my-app");
     "#;
-    check_ok_with_std(source);
+    let result = check_with_errors_std(source);
+    assert!(has_error_code(&result, "T101"));
 }

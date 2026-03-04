@@ -1094,7 +1094,7 @@ impl Checker {
         }
     }
 
-    fn resolve_named_type(&self, name: &str, span: Span) -> Type {
+    fn resolve_named_type(&mut self, name: &str, span: Span) -> Type {
         match name {
             "int" => Type::Int,
             "float" => Type::Float,
@@ -1117,14 +1117,21 @@ impl Checker {
                         type_params: vec![],
                     })
                 } else {
-                    let _ = span;
+                    self.errors.push(
+                        TypeError::error(
+                            TypeErrorCode::T101,
+                            format!("unknown type `{name}`"),
+                            span,
+                        )
+                        .build(),
+                    );
                     Type::Error
                 }
             }
         }
     }
 
-    fn resolve_generic_type(&mut self, name: &str, args: Vec<Type>, _span: Span) -> Type {
+    fn resolve_generic_type(&mut self, name: &str, args: Vec<Type>, span: Span) -> Type {
         match name {
             "Option" => {
                 if args.len() == 1 {
@@ -1163,12 +1170,24 @@ impl Checker {
                 }
             }
             _ => {
-                // User-defined generic type.
-                Type::Struct(StructType {
-                    name: Some(name.to_string()),
-                    fields: vec![],
-                    type_params: args,
-                })
+                // Check type_defs for user-defined generic types
+                if self.type_defs.contains_key(name) {
+                    Type::Struct(StructType {
+                        name: Some(name.to_string()),
+                        fields: vec![],
+                        type_params: args,
+                    })
+                } else {
+                    self.errors.push(
+                        TypeError::error(
+                            TypeErrorCode::T101,
+                            format!("unknown type `{name}`"),
+                            span,
+                        )
+                        .build(),
+                    );
+                    Type::Error
+                }
             }
         }
     }
