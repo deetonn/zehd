@@ -29,6 +29,7 @@ pub async fn run(args: DevArgs) -> Result<()> {
         host: config.server.host,
         port,
         routes_dir,
+        max_requests: config.server.max_requests,
     };
 
     zehd_server::start(options).await?;

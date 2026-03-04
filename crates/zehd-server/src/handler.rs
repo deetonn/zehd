@@ -6,6 +6,7 @@ use axum::extract::Request;
 use axum::http::{Method as HttpMethod, StatusCode};
 use axum::response::{IntoResponse, Response};
 use owo_colors::OwoColorize;
+use tokio::sync::Semaphore;
 use zehd_rune::value::Value;
 use zehd_ward::vm::StackVm;
 
@@ -16,10 +17,23 @@ use crate::router::{Method, RouteTable};
 pub async fn handle_request(
     request: Request,
     route_table: Arc<RouteTable>,
+    semaphore: Arc<Semaphore>,
 ) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
     let start = Instant::now();
+
+    // Acquire concurrency permit (OOM safety net).
+    // Non-blocking: reject immediately with 503 if at capacity.
+    let _permit = match semaphore.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) => {
+            let status = StatusCode::SERVICE_UNAVAILABLE;
+            let response = service_unavailable();
+            log_request(&method, &path, status, start.elapsed());
+            return response;
+        }
+    };
 
     let (status, response) = dispatch(request, &route_table).await;
 
@@ -216,4 +230,11 @@ fn internal_error(message: &str) -> Response {
         "message": message,
     });
     json_response(StatusCode::INTERNAL_SERVER_ERROR, &body)
+}
+
+fn service_unavailable() -> Response {
+    let body = serde_json::json!({
+        "error": "Service Unavailable",
+    });
+    json_response(StatusCode::SERVICE_UNAVAILABLE, &body)
 }

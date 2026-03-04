@@ -87,14 +87,19 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     // 5. Wrap in ArcSwap for hot-reload
     let route_table = Arc::new(ArcSwap::from_pointee(route_table));
 
-    // 6. Build axum app with fallback handler
+    // 6. Create concurrency semaphore (OOM safety net)
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(options.max_requests));
+
+    // 7. Build axum app with fallback handler
     let table = Arc::clone(&route_table);
+    let sem = Arc::clone(&semaphore);
     let app = Router::new().fallback(move |request| {
         let current = table.load_full();
-        handler::handle_request(request, current)
+        let sem = Arc::clone(&sem);
+        handler::handle_request(request, current, sem)
     });
 
-    // 7. Bind listener
+    // 8. Bind listener
     let addr = format!("{}:{}", options.host, options.port);
     let listener = TcpListener::bind(&addr).await.map_err(|source| {
         StartupError::BindError {
@@ -104,7 +109,7 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
         }
     })?;
 
-    // 8. Spawn filesystem watcher for hot-reload
+    // 9. Spawn filesystem watcher for hot-reload
     let _watcher = watcher::spawn(
         options.routes_dir.clone(),
         Arc::clone(&route_table),
@@ -115,10 +120,10 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
 
     let elapsed = start_time.elapsed();
 
-    // 9. Print startup banner
+    // 10. Print startup banner
     print_banner(&options, &route_lines, elapsed);
 
-    // 10. Serve
+    // 11. Serve
     axum::serve(listener, app)
         .await
         .map_err(|source| StartupError::BindError {
@@ -146,6 +151,11 @@ fn print_banner(
         "→".green(),
         options.host,
         options.port
+    );
+    println!(
+        "  {}  {} max concurrent requests",
+        "→".green(),
+        options.max_requests
     );
 
     if !route_lines.is_empty() {

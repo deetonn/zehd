@@ -16,6 +16,9 @@ pub struct ServerConfig {
 
     #[serde(default = "default_host")]
     pub host: String,
+
+    #[serde(default = "default_max_requests")]
+    pub max_requests: usize,
 }
 
 impl Default for ServerConfig {
@@ -23,6 +26,7 @@ impl Default for ServerConfig {
         Self {
             port: default_port(),
             host: default_host(),
+            max_requests: default_max_requests(),
         }
     }
 }
@@ -65,6 +69,10 @@ fn default_port() -> u16 {
 
 fn default_host() -> String {
     "0.0.0.0".to_string()
+}
+
+fn default_max_requests() -> usize {
+    1024
 }
 
 fn default_routes() -> String {
