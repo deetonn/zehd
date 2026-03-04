@@ -604,6 +604,10 @@ impl<'a> Parser<'a> {
         self.advance(); // consume `fn`
 
         let name = self.parse_ident()?;
+
+        // Parse optional type params: <T, U>
+        let type_params = self.parse_optional_type_params()?;
+
         self.expect(&TokenKind::LeftParen)?;
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RightParen)?;
@@ -619,6 +623,7 @@ impl<'a> Parser<'a> {
 
         Some(Function {
             name,
+            type_params,
             params,
             return_type,
             body,

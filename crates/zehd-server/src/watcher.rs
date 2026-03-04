@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,6 +8,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use owo_colors::OwoColorize;
 use tokio::sync::mpsc;
 use zehd_rune::registry::NativeRegistry;
+use zehd_rune::value::Value;
 use zehd_sigil::ModuleTypes;
 use zehd_ward::NativeFn;
 
@@ -28,6 +30,7 @@ pub fn spawn(
     module_types: ModuleTypes,
     native_registry: NativeRegistry,
     native_fns: Arc<Vec<NativeFn>>,
+    global_di: HashMap<String, Value>,
 ) -> Result<RecommendedWatcher, StartupError> {
     let (tx, rx) = mpsc::channel::<notify::Event>(64);
 
@@ -57,6 +60,7 @@ pub fn spawn(
         module_types,
         native_registry,
         native_fns,
+        global_di,
     ));
 
     Ok(watcher)
@@ -70,6 +74,7 @@ async fn watch_loop(
     module_types: ModuleTypes,
     native_registry: NativeRegistry,
     native_fns: Arc<Vec<NativeFn>>,
+    global_di: HashMap<String, Value>,
 ) {
     loop {
         // Wait for the first event.
@@ -132,7 +137,7 @@ async fn watch_loop(
             continue;
         }
 
-        match RouteTable::build(compiled, Arc::clone(&native_fns)) {
+        match RouteTable::build(compiled, Arc::clone(&native_fns), &global_di) {
             Ok(new_table) => {
                 route_table.store(Arc::new(new_table));
                 let ms = start.elapsed().as_millis();

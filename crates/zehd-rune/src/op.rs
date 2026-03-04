@@ -143,9 +143,15 @@ pub enum Op {
     /// Convert top to string.
     ToString = 0xA1,
 
-    // ── HTTP (0xB0–0xBF) ────────────────────────────────────────
+    // ── HTTP / DI (0xB0–0xBF) ──────────────────────────────────
     /// Push implicit `self` context in handlers.
     GetSelf = 0xB0,
+    /// Store value in DI registry. Operand: u16 constant index (type name).
+    /// Stack: [value] → [Unit]
+    Provide = 0xB1,
+    /// Load value from DI registry. Operand: u16 constant index (type name).
+    /// Stack: [] → [value]
+    Inject = 0xB2,
 }
 
 impl Op {
@@ -235,6 +241,8 @@ impl Op {
             0xA1 => Some(Op::ToString),
 
             0xB0 => Some(Op::GetSelf),
+            0xB1 => Some(Op::Provide),
+            0xB2 => Some(Op::Inject),
 
             _ => Option::None,
         }
@@ -258,7 +266,9 @@ impl Op {
             | Op::MakeObject
             | Op::GetField
             | Op::SetField
-            | Op::Concat => 2,
+            | Op::Concat
+            | Op::Provide
+            | Op::Inject => 2,
 
             // u8 operand
             Op::Call => 1,
@@ -344,6 +354,8 @@ impl fmt::Display for Op {
             Op::Concat => "Concat",
             Op::ToString => "ToString",
             Op::GetSelf => "GetSelf",
+            Op::Provide => "Provide",
+            Op::Inject => "Inject",
         };
         write!(f, "{name}")
     }

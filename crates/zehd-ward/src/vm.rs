@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::error::{RuntimeError, RuntimeErrorCode};
 use crate::frame::{CallFrame, ChunkSource};
 use crate::{Context, VmBackend};
@@ -14,6 +16,7 @@ pub struct StackVm {
     frames: Vec<CallFrame>,
     globals: Vec<Value>,
     current_self: Option<Value>,
+    di_registry: HashMap<String, Value>,
 }
 
 impl Default for StackVm {
@@ -29,6 +32,7 @@ impl StackVm {
             frames: Vec::with_capacity(64),
             globals: Vec::new(),
             current_self: None,
+            di_registry: HashMap::new(),
         }
     }
 
@@ -39,7 +43,29 @@ impl StackVm {
             frames: Vec::with_capacity(64),
             globals,
             current_self: None,
+            di_registry: HashMap::new(),
         }
+    }
+
+    /// Create a VM pre-loaded with globals and DI registry (for per-request execution).
+    pub fn with_globals_and_di(globals: Vec<Value>, di: HashMap<String, Value>) -> Self {
+        Self {
+            stack: Vec::with_capacity(256),
+            frames: Vec::with_capacity(64),
+            globals,
+            current_self: None,
+            di_registry: di,
+        }
+    }
+
+    /// Read-only access to the DI registry (for snapshotting).
+    pub fn di_registry(&self) -> &HashMap<String, Value> {
+        &self.di_registry
+    }
+
+    /// Mutable access to the DI registry (for pre-loading).
+    pub fn di_registry_mut(&mut self) -> &mut HashMap<String, Value> {
+        &mut self.di_registry
     }
 
     /// Read-only access to the current globals (for snapshotting after server_init).
@@ -604,6 +630,52 @@ impl StackVm {
                         .build()
                     })?;
                     self.stack.push(val);
+                }
+
+                // ── DI ──────────────────────────────────────────────
+                Op::Provide => {
+                    let name_idx = self.read_u16(chunk)?;
+                    let type_name = match chunk.constants.get(name_idx as usize) {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R190,
+                                format!("provide: constant {name_idx} is not a string"),
+                            )
+                            .build());
+                        }
+                    };
+                    let value = self.pop()?;
+                    if self.di_registry.contains_key(&type_name) {
+                        return Err(RuntimeError::err(
+                            RuntimeErrorCode::R171,
+                            format!("provide<{type_name}>() called twice — each type can only be provided once"),
+                        )
+                        .build());
+                    }
+                    self.di_registry.insert(type_name, value);
+                    self.stack.push(Value::Unit);
+                }
+                Op::Inject => {
+                    let name_idx = self.read_u16(chunk)?;
+                    let type_name = match chunk.constants.get(name_idx as usize) {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::err(
+                                RuntimeErrorCode::R190,
+                                format!("inject: constant {name_idx} is not a string"),
+                            )
+                            .build());
+                        }
+                    };
+                    let value = self.di_registry.get(&type_name).cloned().ok_or_else(|| {
+                        RuntimeError::err(
+                            RuntimeErrorCode::R170,
+                            format!("inject failed: no value provided for type `{type_name}`"),
+                        )
+                        .build()
+                    })?;
+                    self.stack.push(value);
                 }
 
                 // ── Data Structures ─────────────────────────────────

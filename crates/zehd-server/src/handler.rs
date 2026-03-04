@@ -125,9 +125,12 @@ async fn dispatch(request: Request, route_table: &RouteTable) -> (StatusCode, Re
         ),
     ]);
 
-    // Fresh VM per request — cloned globals, full parallelism.
+    // Fresh VM per request — cloned globals + DI, full parallelism.
     let result = {
-        let mut vm = StackVm::with_globals(entry.globals_snapshot.clone());
+        let mut vm = StackVm::with_globals_and_di(
+            entry.globals_snapshot.clone(),
+            entry.di_snapshot.clone(),
+        );
         vm.execute_handler(handler_index, &entry.context, self_value)
     };
 

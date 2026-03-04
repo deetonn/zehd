@@ -76,6 +76,11 @@ pub struct EnumVariantType {
 /// A function type: params → return.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionType {
+    /// Generic type parameter names (e.g. ["T", "U"]). Empty for monomorphic functions.
+    pub type_params: Vec<String>,
+    /// The type variable IDs corresponding to each type param (parallel to `type_params`).
+    /// Used during instantiation to substitute fresh vars at call sites.
+    pub type_param_vars: Vec<TypeVar>,
     pub params: Vec<Type>,
     pub return_type: Box<Type>,
 }
@@ -123,7 +128,8 @@ impl Type {
 
             // Function types — contravariant params, covariant return.
             (Type::Function(a), Type::Function(b)) => {
-                a.params.len() == b.params.len()
+                a.type_params.len() == b.type_params.len()
+                    && a.params.len() == b.params.len()
                     && a.params
                         .iter()
                         .zip(&b.params)
@@ -190,6 +196,16 @@ impl fmt::Display for Type {
             }
             Type::Enum(e) => write!(f, "{}", e.name),
             Type::Function(ft) => {
+                if !ft.type_params.is_empty() {
+                    write!(f, "<")?;
+                    for (i, tp) in ft.type_params.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{tp}")?;
+                    }
+                    write!(f, ">")?;
+                }
                 write!(f, "(")?;
                 for (i, p) in ft.params.iter().enumerate() {
                     if i > 0 {

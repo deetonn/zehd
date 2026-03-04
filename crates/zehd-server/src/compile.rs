@@ -46,7 +46,7 @@ pub fn compile_routes(
 
 /// Run a single source through parse → check → compile.
 /// Returns the compiled module or a list of error messages.
-fn compile_one(
+pub(crate) fn compile_one(
     route: &DiscoveredRoute,
     module_types: &ModuleTypes,
     native_registry: &NativeRegistry,

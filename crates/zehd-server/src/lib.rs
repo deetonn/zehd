@@ -9,6 +9,7 @@ mod watcher;
 pub mod config;
 pub mod error;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,6 +17,9 @@ use arc_swap::ArcSwap;
 use axum::Router;
 use owo_colors::OwoColorize;
 use tokio::net::TcpListener;
+use zehd_rune::value::Value;
+use zehd_ward::vm::StackVm;
+use zehd_ward::VmBackend;
 
 use config::ServerOptions;
 use error::StartupError;
@@ -31,6 +35,14 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     // 0. Build standard library
     let (module_types, native_registry, native_fns) = std_lib::build_std();
     let native_fns = Arc::new(native_fns);
+
+    // 0b. Compile and execute main.z (if present) to extract DI registry
+    let global_di = process_main_z(
+        &options.project_dir,
+        &module_types,
+        &native_registry,
+        &native_fns,
+    )?;
 
     // 1. Discover route files
     let routes = discover::discover_routes(&options.routes_dir)?;
@@ -70,7 +82,7 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     }
 
     // 3. Build route table (runs server_init for each route)
-    let route_table = RouteTable::build(compiled, Arc::clone(&native_fns))?;
+    let route_table = RouteTable::build(compiled, Arc::clone(&native_fns), &global_di)?;
 
     // 4. Collect route info for the banner
     let mut route_lines: Vec<(String, String)> = Vec::new();
@@ -117,6 +129,7 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
         module_types,
         native_registry,
         Arc::clone(&native_fns),
+        global_di,
     )?;
 
     let elapsed = start_time.elapsed();
@@ -134,6 +147,56 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
         })?;
 
     Ok(())
+}
+
+/// Compile and execute main.z if it exists. Returns the DI registry.
+fn process_main_z(
+    project_dir: &std::path::Path,
+    module_types: &zehd_sigil::ModuleTypes,
+    native_registry: &zehd_rune::registry::NativeRegistry,
+    native_fns: &Arc<Vec<zehd_ward::NativeFn>>,
+) -> Result<HashMap<String, Value>, StartupError> {
+    let main_path = project_dir.join("main.z");
+    if !main_path.exists() {
+        return Ok(HashMap::new());
+    }
+
+    let source = std::fs::read_to_string(&main_path).map_err(|source| {
+        StartupError::IoError {
+            path: main_path.clone(),
+            source,
+        }
+    })?;
+
+    let route = discover::DiscoveredRoute {
+        url_path: "main.z".to_string(),
+        file_path: main_path,
+        source,
+    };
+
+    let module = compile::compile_one(&route, module_types, native_registry).map_err(|msgs| {
+        StartupError::InitFailed {
+            url_path: "main.z".to_string(),
+            message: msgs.join("; "),
+        }
+    })?;
+
+    let context = zehd_ward::Context {
+        module,
+        native_fns: Arc::clone(native_fns),
+    };
+
+    let mut vm = StackVm::new();
+    if let Some(ref init_chunk) = context.module.server_init {
+        vm.execute(init_chunk, &context).map_err(|e| {
+            StartupError::InitFailed {
+                url_path: "main.z".to_string(),
+                message: e.message,
+            }
+        })?;
+    }
+
+    Ok(vm.di_registry().clone())
 }
 
 fn print_banner(

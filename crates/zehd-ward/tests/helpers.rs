@@ -106,3 +106,59 @@ pub fn vm_and_context(source: &str) -> (StackVm, Context) {
     let vm = StackVm::new();
     (vm, context)
 }
+
+/// Build a minimal std module setup (types + native registry + native fns)
+/// so that `import { provide, inject } from std;` works in tests.
+fn build_test_std() -> (zehd_sigil::ModuleTypes, zehd_rune::registry::NativeRegistry, Vec<zehd_ward::NativeFn>) {
+    let module_types = zehd_sigil::std_module_types();
+    let mut registry = zehd_rune::registry::NativeRegistry::new();
+    let mut native_fns: Vec<zehd_ward::NativeFn> = Vec::new();
+
+    // Register provide and inject as native IDs (no-op implementations).
+    let natives: &[(&str, &str)] = &[
+        ("std", "env"),
+        ("std::log", "info"),
+        ("std::log", "warn"),
+        ("std", "provide"),
+        ("std", "inject"),
+    ];
+    fn native_noop(_args: &[Value]) -> Result<Value, zehd_ward::error::RuntimeError> {
+        Ok(Value::Unit)
+    }
+    for (i, (module, name)) in natives.iter().enumerate() {
+        registry.register(*module, *name, i as u16);
+        native_fns.push(native_noop);
+    }
+
+    (module_types, registry, native_fns)
+}
+
+/// Compile source through the full pipeline with std library support.
+pub fn compile_module_with_std(source: &str) -> CompiledModule {
+    let (module_types, native_registry, _) = build_test_std();
+    let parse_result = zehd_codex::parse(source);
+    if !parse_result.is_ok() {
+        let msgs: Vec<String> =
+            parse_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("parse errors:\n{}", msgs.join("\n"));
+    }
+    let check_result = zehd_sigil::check(&parse_result.program, source, &module_types);
+    if check_result.has_errors() {
+        let msgs: Vec<String> =
+            check_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("type errors:\n{}", msgs.join("\n"));
+    }
+    let compile_result = zehd_rune::compile(&parse_result.program, check_result, &native_registry);
+    if compile_result.has_errors() {
+        let msgs: Vec<String> =
+            compile_result.errors.iter().map(|e| format!("  {e}")).collect();
+        panic!("compile errors:\n{}", msgs.join("\n"));
+    }
+    compile_result.module
+}
+
+/// Create a Context with std native functions.
+pub fn context_with_std(module: CompiledModule) -> Context {
+    let (_, _, native_fns) = build_test_std();
+    Context { module, native_fns: Arc::new(native_fns) }
+}

@@ -122,6 +122,8 @@ impl InferCtx {
                 type_params: e.type_params.iter().map(|t| self.zonk(t)).collect(),
             }),
             Type::Function(f) => Type::Function(FunctionType {
+                type_params: f.type_params.clone(),
+                type_param_vars: f.type_param_vars.clone(),
                 params: f.params.iter().map(|t| self.zonk(t)).collect(),
                 return_type: Box::new(self.zonk(&f.return_type)),
             }),
@@ -226,7 +228,9 @@ impl InferCtx {
 
             // Function types.
             (Type::Function(fa), Type::Function(fb)) => {
-                if fa.params.len() != fb.params.len() {
+                if fa.params.len() != fb.params.len()
+                    || fa.type_params.len() != fb.type_params.len()
+                {
                     return Err(TypeError::error(
                         TypeErrorCode::T110,
                         format!("type mismatch: expected `{b}`, found `{a}`"),
@@ -242,6 +246,8 @@ impl InferCtx {
                     .collect();
                 let ret = self.unify(&fa.return_type, &fb.return_type, span)?;
                 Ok(Type::Function(FunctionType {
+                    type_params: fa.type_params.clone(),
+                    type_param_vars: fa.type_param_vars.clone(),
                     params: params?,
                     return_type: Box::new(ret),
                 }))

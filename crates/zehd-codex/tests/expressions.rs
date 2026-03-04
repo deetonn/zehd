@@ -444,3 +444,71 @@ fn grouped_changes_precedence() {
         other => panic!("expected Binary, got {:?}", other),
     }
 }
+
+// ── Generic Call Syntax ─────────────────────────────────────────
+
+#[test]
+fn generic_call_single_type_arg() {
+    let expr = parse_single_expr("provide<DbPool>(pool);");
+    match &expr.kind {
+        ExprKind::Call { callee, type_args, args } => {
+            assert!(matches!(&callee.kind, ExprKind::Ident(id) if id.name == "provide"));
+            assert_eq!(type_args.len(), 1);
+            match &type_args[0].kind {
+                TypeKind::Named(ident) => assert_eq!(ident.name, "DbPool"),
+                other => panic!("expected Named type, got {:?}", other),
+            }
+            assert_eq!(args.len(), 1);
+        }
+        other => panic!("expected Call, got {:?}", other),
+    }
+}
+
+#[test]
+fn generic_call_no_args() {
+    let expr = parse_single_expr("inject<AppName>();");
+    match &expr.kind {
+        ExprKind::Call { callee, type_args, args } => {
+            assert!(matches!(&callee.kind, ExprKind::Ident(id) if id.name == "inject"));
+            assert_eq!(type_args.len(), 1);
+            match &type_args[0].kind {
+                TypeKind::Named(ident) => assert_eq!(ident.name, "AppName"),
+                other => panic!("expected Named type, got {:?}", other),
+            }
+            assert_eq!(args.len(), 0);
+        }
+        other => panic!("expected Call, got {:?}", other),
+    }
+}
+
+#[test]
+fn generic_call_generic_type_arg() {
+    let expr = parse_single_expr("inject<Option<string>>();");
+    match &expr.kind {
+        ExprKind::Call { type_args, .. } => {
+            assert_eq!(type_args.len(), 1);
+            match &type_args[0].kind {
+                TypeKind::Generic { name, args } => {
+                    assert_eq!(name.name, "Option");
+                    assert_eq!(args.len(), 1);
+                }
+                other => panic!("expected Generic type, got {:?}", other),
+            }
+        }
+        other => panic!("expected Call, got {:?}", other),
+    }
+}
+
+#[test]
+fn less_than_is_not_generic_call() {
+    // `x < y` should still parse as a comparison, not a generic call attempt
+    let expr = parse_single_expr("x < y;");
+    match &expr.kind {
+        ExprKind::Binary { op, left, right } => {
+            assert_eq!(*op, BinaryOp::Lt);
+            assert!(matches!(&left.kind, ExprKind::Ident(id) if id.name == "x"));
+            assert!(matches!(&right.kind, ExprKind::Ident(id) if id.name == "y"));
+        }
+        other => panic!("expected Binary Lt, got {:?}", other),
+    }
+}

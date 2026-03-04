@@ -8,6 +8,8 @@ pub struct ServerOptions {
     pub port: u16,
     /// Absolute path to the routes directory.
     pub routes_dir: PathBuf,
+    /// Root project directory (contains main.z, zehd.toml, etc.).
+    pub project_dir: PathBuf,
     /// Maximum number of concurrent in-flight requests (OOM safety net).
     pub max_requests: usize,
     /// Whether to log each request to stdout.

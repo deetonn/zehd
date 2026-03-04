@@ -63,6 +63,8 @@ pub struct RouteEntry {
     pub method_map: HashMap<Method, usize>,
     /// Globals snapshot from server_init — cloned per request for isolation.
     pub globals_snapshot: Vec<Value>,
+    /// DI registry snapshot — cloned per request for type-safe injection.
+    pub di_snapshot: HashMap<String, Value>,
     /// Immutable compiled module + native fns, shared across requests.
     pub context: Arc<Context>,
     /// Sorted list of allowed methods (for 405 Allow header).
@@ -87,6 +89,7 @@ impl RouteTable {
     pub fn build(
         compiled_routes: Vec<CompiledRoute>,
         native_fns: Arc<Vec<NativeFn>>,
+        global_di: &HashMap<String, Value>,
     ) -> Result<Self, StartupError> {
         let mut routes = HashMap::new();
 
@@ -112,8 +115,12 @@ impl RouteTable {
             });
 
             // Run server_init on a temp VM to populate globals, then snapshot.
-            let globals_snapshot = {
+            // Pre-load global DI registry from main.z.
+            let (globals_snapshot, di_snapshot) = {
                 let mut vm = StackVm::new();
+                for (k, v) in global_di {
+                    vm.di_registry_mut().insert(k.clone(), v.clone());
+                }
                 if let Some(ref init_chunk) = context.module.server_init {
                     vm.execute(init_chunk, &context).map_err(|e| {
                         StartupError::InitFailed {
@@ -122,12 +129,13 @@ impl RouteTable {
                         }
                     })?;
                 }
-                vm.globals().to_vec()
+                (vm.globals().to_vec(), vm.di_registry().clone())
             };
 
             let entry = RouteEntry {
                 method_map,
                 globals_snapshot,
+                di_snapshot,
                 context,
                 allowed_methods: allowed,
             };

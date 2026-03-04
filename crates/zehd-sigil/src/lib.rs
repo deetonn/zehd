@@ -32,13 +32,35 @@ pub fn std_module_types() -> ModuleTypes {
     // std — top-level standard library functions
     m.insert(
         "std".to_string(),
-        HashMap::from([(
-            "env".to_string(),
-            Type::Function(FunctionType {
-                params: vec![Type::String],
-                return_type: Box::new(Type::Option(Box::new(Type::String))),
-            }),
-        )]),
+        HashMap::from([
+            (
+                "env".to_string(),
+                Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
+                    params: vec![Type::String],
+                    return_type: Box::new(Type::Option(Box::new(Type::String))),
+                }),
+            ),
+            (
+                "provide".to_string(),
+                Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
+                    params: vec![], // special-cased in checker
+                    return_type: Box::new(Type::Unit),
+                }),
+            ),
+            (
+                "inject".to_string(),
+                Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
+                    params: vec![], // special-cased in checker
+                    return_type: Box::new(Type::Unit), // overridden per call site
+                }),
+            ),
+        ]),
     );
 
     // std::log — logging functions
@@ -48,6 +70,8 @@ pub fn std_module_types() -> ModuleTypes {
             (
                 "info".to_string(),
                 Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
                     params: vec![Type::String],
                     return_type: Box::new(Type::Unit),
                 }),
@@ -55,6 +79,8 @@ pub fn std_module_types() -> ModuleTypes {
             (
                 "warn".to_string(),
                 Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
                     params: vec![Type::String],
                     return_type: Box::new(Type::Unit),
                 }),

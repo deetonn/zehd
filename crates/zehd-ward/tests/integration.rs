@@ -308,6 +308,8 @@ fn native_function_call() {
         HashMap::from([(
             "add_one".to_string(),
             Type::Function(FunctionType {
+                type_params: vec![],
+                type_param_vars: vec![],
                 params: vec![Type::Int],
                 return_type: Box::new(Type::Int),
             }),
@@ -361,6 +363,8 @@ fn native_env_returns_none_for_missing() {
         HashMap::from([(
             "env".to_string(),
             Type::Function(FunctionType {
+                type_params: vec![],
+                type_param_vars: vec![],
                 params: vec![Type::String],
                 return_type: Box::new(Type::Option(Box::new(Type::String))),
             }),

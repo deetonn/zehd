@@ -153,14 +153,27 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier => {
                 self.advance();
                 let name = self.lexeme(&tok.span).to_string();
-                Some(Expr {
+                let ident_expr = Expr {
                     id: self.next_id(),
                     kind: ExprKind::Ident(Ident {
                         name,
                         span: tok.span,
                     }),
                     span: tok.span,
-                })
+                };
+
+                // Speculatively try `ident<Type>(args)` — generic call syntax.
+                if self.check(&TokenKind::Lt) {
+                    let saved = self.save();
+                    let saved_errors = self.errors.len();
+                    if let Some(call) = self.try_parse_generic_call(ident_expr.clone()) {
+                        return Some(call);
+                    }
+                    self.restore(saved);
+                    self.errors.truncate(saved_errors);
+                }
+
+                Some(ident_expr)
             }
 
             // Self
@@ -281,6 +294,30 @@ impl<'a> Parser<'a> {
             }
             _ => Some(lhs),
         }
+    }
+
+    /// Speculatively parse `<Type, ...>(args)` after an identifier.
+    /// Returns `None` to signal backtrack if this isn't a generic call.
+    fn try_parse_generic_call(&mut self, callee: Expr) -> Option<Expr> {
+        self.advance(); // consume `<`
+        let mut type_args = Vec::new();
+        loop {
+            let arg = self.parse_type_annotation()?;
+            type_args.push(arg);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            if self.check(&TokenKind::Gt) {
+                break;
+            }
+        }
+        if !self.eat(&TokenKind::Gt) {
+            return None;
+        }
+        if !self.check(&TokenKind::LeftParen) {
+            return None;
+        }
+        self.parse_call(callee, type_args)
     }
 
     fn parse_call(&mut self, callee: Expr, type_args: Vec<TypeAnnotation>) -> Option<Expr> {

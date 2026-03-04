@@ -25,10 +25,13 @@ pub async fn run(args: DevArgs) -> Result<()> {
     let routes_dir = std::env::current_dir()?.join(&config.paths.routes);
     let routes_dir = routes_dir.canonicalize().unwrap_or(routes_dir);
 
+    let project_dir = std::env::current_dir()?;
+
     let options = zehd_server::config::ServerOptions {
         host: config.server.host,
         port,
         routes_dir,
+        project_dir,
         max_requests: config.server.max_requests,
         request_logging: config.server.request_logging,
     };

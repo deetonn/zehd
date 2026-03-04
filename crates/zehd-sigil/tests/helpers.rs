@@ -45,6 +45,39 @@ pub fn type_of(types: &TypeTable, id: NodeId) -> &Type {
     types.get(&id).expect("no type for node")
 }
 
+/// Parse and type-check source code with std module types.
+pub fn check_ok_with_std(source: &str) -> CheckResult {
+    let module_types = zehd_sigil::std_module_types();
+    let parse_result = zehd_codex::parse(source);
+    if !parse_result.is_ok() {
+        panic!(
+            "parse errors:\n{}",
+            format_errors_parse(&parse_result.errors, source)
+        );
+    }
+    let result = zehd_sigil::check(&parse_result.program, source, &module_types);
+    if result.has_errors() {
+        panic!(
+            "type errors:\n{}",
+            format_errors(&result.errors, source)
+        );
+    }
+    result
+}
+
+/// Parse and type-check with std module types, expecting type errors.
+pub fn check_with_errors_std(source: &str) -> CheckResult {
+    let module_types = zehd_sigil::std_module_types();
+    let parse_result = zehd_codex::parse(source);
+    if !parse_result.is_ok() {
+        panic!(
+            "parse errors:\n{}",
+            format_errors_parse(&parse_result.errors, source)
+        );
+    }
+    zehd_sigil::check(&parse_result.program, source, &module_types)
+}
+
 /// Check that the result contains an error with the given code.
 pub fn has_error_code(result: &CheckResult, code: &str) -> bool {
     result.errors.iter().any(|e| e.code.to_string() == code)

@@ -30,6 +30,9 @@ pub struct Checker {
     type_defs: HashMap<String, StructType>,
     /// Module type registry — maps module path → exported name → Type.
     module_types: ModuleTypes,
+    /// Type parameters in scope for the current generic function.
+    /// Maps name (e.g. "T") → Type::Var(n) (fresh inference var).
+    generic_params: HashMap<String, Type>,
 }
 
 impl Checker {
@@ -44,6 +47,7 @@ impl Checker {
             return_type: None,
             type_defs: HashMap::new(),
             module_types,
+            generic_params: HashMap::new(),
         }
     }
 
@@ -99,6 +103,17 @@ impl Checker {
     fn collect_function_signatures(&mut self, items: &[Item]) {
         for item in items {
             if let ItemKind::Function(f) = &item.kind {
+                // Save and set up generic params if this is a generic function.
+                let prev_generics = std::mem::take(&mut self.generic_params);
+                let mut type_param_names = Vec::new();
+                let mut type_param_vars = Vec::new();
+                for tp in &f.type_params {
+                    let var = self.infer.fresh_var();
+                    self.generic_params.insert(tp.name.clone(), Type::Var(var));
+                    type_param_names.push(tp.name.clone());
+                    type_param_vars.push(var);
+                }
+
                 let param_types: Vec<Type> = f
                     .params
                     .iter()
@@ -116,10 +131,14 @@ impl Checker {
                     self.infer.fresh()
                 };
                 let func_ty = Type::Function(FunctionType {
+                    type_params: type_param_names,
+                    type_param_vars,
                     params: param_types,
                     return_type: Box::new(return_ty),
                 });
                 self.update_symbol_type(&f.name.name, func_ty);
+
+                self.generic_params = prev_generics;
             }
         }
     }
@@ -218,6 +237,17 @@ impl Checker {
 
     fn check_function(&mut self, f: &Function) {
         self.enter_scope(ScopeKind::Function);
+        let prev_generics = std::mem::take(&mut self.generic_params);
+
+        // Set up generic params with fresh vars.
+        let mut type_param_names = Vec::new();
+        let mut type_param_vars = Vec::new();
+        for tp in &f.type_params {
+            let var = self.infer.fresh_var();
+            self.generic_params.insert(tp.name.clone(), Type::Var(var));
+            type_param_names.push(tp.name.clone());
+            type_param_vars.push(var);
+        }
 
         // Register parameters with their annotated types (or fresh vars).
         let mut param_types = Vec::new();
@@ -252,12 +282,15 @@ impl Checker {
 
         // Build the function type and update the symbol.
         let func_ty = Type::Function(FunctionType {
+            type_params: type_param_names,
+            type_param_vars,
             params: param_types,
             return_type: Box::new(return_ty),
         });
         self.update_symbol_type(&f.name.name, func_ty);
 
         self.return_type = prev_return;
+        self.generic_params = prev_generics;
         self.exit_scope();
     }
 
@@ -643,11 +676,58 @@ impl Checker {
             }
 
             // ── Function call ───────────────────────────────────
-            ExprKind::Call { callee, args, .. } => {
+            ExprKind::Call { callee, type_args, args } => {
+                // Special-case provide/inject — type-safe DI functions.
+                if let ExprKind::Ident(ident) = &callee.kind {
+                    if ident.name == "provide" && !type_args.is_empty() {
+                        let resolved_ty = self.resolve_type_annotation(&type_args[0]);
+                        if args.len() == 1 {
+                            let val_ty = self.check_expr(&args[0]);
+                            // If the type resolved to a known type, unify value against it.
+                            if !resolved_ty.is_error() {
+                                if let Err(e) = self.infer.unify(&val_ty, &resolved_ty, args[0].span) {
+                                    self.errors.push(e);
+                                }
+                            }
+                        } else {
+                            self.errors.push(
+                                TypeError::error(
+                                    TypeErrorCode::T114,
+                                    "provide<T>() expects exactly 1 argument",
+                                    expr.span,
+                                )
+                                .build(),
+                            );
+                        }
+                        return Type::Unit;
+                    }
+                    if ident.name == "inject" && !type_args.is_empty() {
+                        let resolved_ty = self.resolve_type_annotation(&type_args[0]);
+                        if !args.is_empty() {
+                            self.errors.push(
+                                TypeError::error(
+                                    TypeErrorCode::T114,
+                                    "inject<T>() takes no arguments",
+                                    expr.span,
+                                )
+                                .build(),
+                            );
+                        }
+                        return resolved_ty;
+                    }
+                }
+
                 let callee_ty = self.check_expr(callee);
                 let resolved = self.infer.resolve(&callee_ty);
                 match resolved {
                     Type::Function(ft) => {
+                        // Instantiate generic functions at the call site.
+                        let ft = if !ft.type_params.is_empty() {
+                            self.instantiate_generic_function(&ft, type_args, expr.span)
+                        } else {
+                            ft
+                        };
+
                         if ft.params.len() != args.len() {
                             self.errors.push(
                                 TypeError::error(
@@ -686,6 +766,8 @@ impl Checker {
                         }
                         let ret = self.infer.fresh();
                         let func_ty = Type::Function(FunctionType {
+                            type_params: vec![],
+                            type_param_vars: vec![],
                             params: arg_types,
                             return_type: Box::new(ret.clone()),
                         });
@@ -839,6 +921,8 @@ impl Checker {
                 self.exit_scope();
 
                 Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
                     params: param_types,
                     return_type: Box::new(ret_ty),
                 })
@@ -1001,6 +1085,8 @@ impl Checker {
                     .collect();
                 let ret = self.resolve_type_annotation(return_type);
                 Type::Function(FunctionType {
+                    type_params: vec![],
+                    type_param_vars: vec![],
                     params: param_types,
                     return_type: Box::new(ret),
                 })
@@ -1016,6 +1102,10 @@ impl Checker {
             "bool" => Type::Bool,
             "time" => Type::Time,
             _ => {
+                // Check generic params first (e.g. T in `fn identity<T>(x: T): T`)
+                if let Some(ty) = self.generic_params.get(name) {
+                    return ty.clone();
+                }
                 // Check if it's a resolved user-defined type.
                 if let Some(st) = self.type_defs.get(name) {
                     Type::Struct(st.clone())
@@ -1080,6 +1170,71 @@ impl Checker {
                     type_params: args,
                 })
             }
+        }
+    }
+
+    // ── Generic Function Instantiation ─────────────────────────
+
+    /// Instantiate a generic function type at a call site.
+    /// Creates fresh type vars for each type param (or uses explicit type args),
+    /// then substitutes them throughout the param/return types.
+    fn instantiate_generic_function(
+        &mut self,
+        ft: &FunctionType,
+        type_args: &[TypeAnnotation],
+        _span: Span,
+    ) -> FunctionType {
+        // Build substitution: original TypeVar → fresh var (or resolved type arg).
+        let mut subst: HashMap<TypeVar, Type> = HashMap::new();
+        for (i, var) in ft.type_param_vars.iter().enumerate() {
+            let ty = if i < type_args.len() {
+                self.resolve_type_annotation(&type_args[i])
+            } else {
+                self.infer.fresh() // infer if not explicitly provided
+            };
+            subst.insert(*var, ty);
+        }
+        // Substitute through params and return type.
+        FunctionType {
+            type_params: vec![], // instantiated = monomorphic
+            type_param_vars: vec![],
+            params: ft.params.iter().map(|t| self.substitute(t, &subst)).collect(),
+            return_type: Box::new(self.substitute(&ft.return_type, &subst)),
+        }
+    }
+
+    /// Substitute type variables according to a mapping.
+    fn substitute(&self, ty: &Type, subst: &HashMap<TypeVar, Type>) -> Type {
+        match ty {
+            Type::Var(v) => {
+                if let Some(replacement) = subst.get(v) {
+                    replacement.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Option(inner) => Type::Option(Box::new(self.substitute(inner, subst))),
+            Type::List(inner) => Type::List(Box::new(self.substitute(inner, subst))),
+            Type::Result(ok, err) => Type::Result(
+                Box::new(self.substitute(ok, subst)),
+                Box::new(self.substitute(err, subst)),
+            ),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.substitute(k, subst)),
+                Box::new(self.substitute(v, subst)),
+            ),
+            Type::Function(f) => Type::Function(FunctionType {
+                type_params: f.type_params.clone(),
+                type_param_vars: f.type_param_vars.clone(),
+                params: f.params.iter().map(|t| self.substitute(t, subst)).collect(),
+                return_type: Box::new(self.substitute(&f.return_type, subst)),
+            }),
+            Type::Struct(s) => Type::Struct(StructType {
+                name: s.name.clone(),
+                fields: s.fields.iter().map(|(n, t)| (n.clone(), self.substitute(t, subst))).collect(),
+                type_params: s.type_params.iter().map(|t| self.substitute(t, subst)).collect(),
+            }),
+            other => other.clone(),
         }
     }
 

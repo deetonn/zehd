@@ -19,6 +19,8 @@ pub fn build_std() -> (ModuleTypes, NativeRegistry, Vec<NativeFn>) {
         ("std", "env", native_env),
         ("std::log", "info", native_log_info),
         ("std::log", "warn", native_log_warn),
+        ("std", "provide", native_noop),
+        ("std", "inject", native_noop),
     ];
 
     for (i, (module, name, implementation)) in natives.iter().enumerate() {
@@ -30,6 +32,13 @@ pub fn build_std() -> (ModuleTypes, NativeRegistry, Vec<NativeFn>) {
 }
 
 // ── Native Implementations ──────────────────────────────────────
+
+/// No-op native function — used for provide/inject which are handled via
+/// dedicated opcodes. The native registry entry exists only so that
+/// `collect_native_imports()` finds them.
+fn native_noop(_args: &[Value]) -> Result<Value, zehd_ward::error::RuntimeError> {
+    Ok(Value::Unit)
+}
 
 fn native_env(args: &[Value]) -> Result<Value, zehd_ward::error::RuntimeError> {
     let key = match args.first() {

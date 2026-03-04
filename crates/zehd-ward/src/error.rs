@@ -28,6 +28,10 @@ pub enum RuntimeErrorCode {
     R160,
     /// Index out of bounds.
     R161,
+    /// DI inject failed — type not provided.
+    R170,
+    /// Duplicate provide — type already registered.
+    R171,
     /// Internal VM error.
     R190,
 }
@@ -46,6 +50,8 @@ impl fmt::Display for RuntimeErrorCode {
             RuntimeErrorCode::R152 => "R152",
             RuntimeErrorCode::R160 => "R160",
             RuntimeErrorCode::R161 => "R161",
+            RuntimeErrorCode::R170 => "R170",
+            RuntimeErrorCode::R171 => "R171",
             RuntimeErrorCode::R190 => "R190",
         };
         write!(f, "{s}")

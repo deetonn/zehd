@@ -791,8 +791,29 @@ impl Compiler {
 
             // ── Function Call ──────────────────────────────────
             ExprKind::Call {
-                callee, args, ..
+                callee, type_args, args,
             } => {
+                // Intercept provide/inject — emit dedicated opcodes.
+                if let ExprKind::Ident(name) = &callee.kind {
+                    if name.name == "provide" && !type_args.is_empty()
+                        && self.native_imports.contains_key("provide")
+                    {
+                        self.compile_expr(&args[0]);
+                        let type_key = type_arg_to_string(&type_args[0]);
+                        let idx = self.builder.add_constant(Value::String(type_key));
+                        self.builder.emit_u16(Op::Provide, idx, expr.span);
+                        return;
+                    }
+                    if name.name == "inject" && !type_args.is_empty()
+                        && self.native_imports.contains_key("inject")
+                    {
+                        let type_key = type_arg_to_string(&type_args[0]);
+                        let idx = self.builder.add_constant(Value::String(type_key));
+                        self.builder.emit_u16(Op::Inject, idx, expr.span);
+                        return;
+                    }
+                }
+
                 // Check if the callee is a native import.
                 if let ExprKind::Ident(name) = &callee.kind {
                     if let Some(&native_id) = self.native_imports.get(&name.name) {
@@ -1465,5 +1486,22 @@ impl Compiler {
             self.builder.emit(Op::Unit, span);
         }
         self.builder.emit(Op::Return, span);
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+/// Convert a type annotation to a string key for DI registry lookups.
+fn type_arg_to_string(ann: &TypeAnnotation) -> String {
+    match &ann.kind {
+        TypeKind::Named(ident) => ident.name.clone(),
+        TypeKind::Generic { name, args } => {
+            let arg_strs: Vec<String> = args.iter().map(type_arg_to_string).collect();
+            format!("{}<{}>", name.name, arg_strs.join(", "))
+        }
+        TypeKind::Function { params, return_type } => {
+            let param_strs: Vec<String> = params.iter().map(type_arg_to_string).collect();
+            format!("({}) => {}", param_strs.join(", "), type_arg_to_string(return_type))
+        }
     }
 }
