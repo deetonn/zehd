@@ -32,6 +32,21 @@ impl StackVm {
         }
     }
 
+    /// Create a VM pre-loaded with a globals snapshot (for per-request execution).
+    pub fn with_globals(globals: Vec<Value>) -> Self {
+        Self {
+            stack: Vec::with_capacity(256),
+            frames: Vec::with_capacity(64),
+            globals,
+            current_self: None,
+        }
+    }
+
+    /// Read-only access to the current globals (for snapshotting after server_init).
+    pub fn globals(&self) -> &[Value] {
+        &self.globals
+    }
+
     /// Execute a function from the module by index, passing arguments.
     pub fn call_function(
         &mut self,

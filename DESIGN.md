@@ -40,6 +40,7 @@ trait VmBackend {
 - Stack-based chosen for simplicity — easier to implement, debug, and iterate on
 - Implements `VmBackend` — the rest of the system is backend-agnostic
 - Gets the language working quickly
+- **Per-request VMs:** Each request gets a fresh `StackVm` with cloned globals from server_init. No mutex, full parallelism. Server-scope `let` mutations are request-local (not shared between requests). Shared mutable state is for `provide<T>/inject<T>` (future).
 
 **Phase 2 — Cranelift JIT (future):**
 - Second implementation of `VmBackend` — plugs into the same system

@@ -7,6 +7,7 @@ use axum::http::{Method as HttpMethod, StatusCode};
 use axum::response::{IntoResponse, Response};
 use owo_colors::OwoColorize;
 use zehd_rune::value::Value;
+use zehd_ward::vm::StackVm;
 
 use crate::json::value_to_json;
 use crate::router::{Method, RouteTable};
@@ -105,9 +106,9 @@ async fn dispatch(request: Request, route_table: &RouteTable) -> (StatusCode, Re
         ),
     ]);
 
-    // Lock VM and execute handler
+    // Fresh VM per request — cloned globals, full parallelism.
     let result = {
-        let mut vm = entry.vm.lock().unwrap();
+        let mut vm = StackVm::with_globals(entry.globals_snapshot.clone());
         vm.execute_handler(handler_index, &entry.context, self_value)
     };
 

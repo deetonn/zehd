@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use zehd_codex::ast::HttpMethod as ZehdMethod;
+use zehd_rune::value::Value;
 use zehd_ward::vm::StackVm;
 use zehd_ward::{Context, NativeFn, VmBackend};
 
@@ -56,14 +57,14 @@ fn from_zehd_method(m: &ZehdMethod) -> Method {
 
 // ── Route Entry ─────────────────────────────────────────────────
 
-/// A single route with its method handlers, VM, and context.
+/// A single route with its method handlers and shared context.
 pub struct RouteEntry {
     /// Maps HTTP method to handler index in `context.module.handlers`.
     pub method_map: HashMap<Method, usize>,
-    /// VM instance for this route (owns globals from server_init).
-    pub vm: Mutex<StackVm>,
-    /// Immutable compiled module.
-    pub context: Context,
+    /// Globals snapshot from server_init — cloned per request for isolation.
+    pub globals_snapshot: Vec<Value>,
+    /// Immutable compiled module + native fns, shared across requests.
+    pub context: Arc<Context>,
     /// Sorted list of allowed methods (for 405 Allow header).
     pub allowed_methods: Vec<Method>,
 }
@@ -105,26 +106,28 @@ impl RouteTable {
                 Method::Delete => 4,
             });
 
-            let context = Context {
+            let context = Arc::new(Context {
                 module: route.module,
                 native_fns: Arc::clone(&native_fns),
+            });
+
+            // Run server_init on a temp VM to populate globals, then snapshot.
+            let globals_snapshot = {
+                let mut vm = StackVm::new();
+                if let Some(ref init_chunk) = context.module.server_init {
+                    vm.execute(init_chunk, &context).map_err(|e| {
+                        StartupError::InitFailed {
+                            url_path: route.url_path.clone(),
+                            message: e.message,
+                        }
+                    })?;
+                }
+                vm.globals().to_vec()
             };
-
-            let mut vm = StackVm::new();
-
-            // Run server_init to populate globals (top-level let/const).
-            if let Some(ref init_chunk) = context.module.server_init {
-                vm.execute(init_chunk, &context).map_err(|e| {
-                    StartupError::InitFailed {
-                        url_path: route.url_path.clone(),
-                        message: e.message,
-                    }
-                })?;
-            }
 
             let entry = RouteEntry {
                 method_map,
-                vm: Mutex::new(vm),
+                globals_snapshot,
                 context,
                 allowed_methods: allowed,
             };

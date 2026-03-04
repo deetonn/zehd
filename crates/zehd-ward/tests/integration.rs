@@ -216,6 +216,55 @@ fn globals_persist_across_handler_calls() {
     assert_eq!(r2, Value::String("hi".into()));
 }
 
+// ── Per-Request Globals Isolation ─────────────────────────────────
+
+#[test]
+fn globals_snapshot_isolates_requests() {
+    // A handler that mutates a server-scope `let` should not affect subsequent requests.
+    let module = helpers::compile_module(
+        r#"
+        let counter = 0;
+        get {
+            counter = counter + 1;
+            counter
+        }
+        "#,
+    );
+    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]) };
+
+    // Run server_init to populate globals
+    let mut init_vm = zehd_ward::vm::StackVm::new();
+    if let Some(chunk) = &context.module.server_init {
+        use zehd_ward::VmBackend;
+        init_vm.execute(chunk, &context).unwrap();
+    }
+    let globals_snapshot = init_vm.globals().to_vec();
+
+    let self_value = || Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String(String::new())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+
+    // Request 1: fresh VM from snapshot
+    let mut vm1 = zehd_ward::vm::StackVm::with_globals(globals_snapshot.clone());
+    let r1 = vm1.execute_handler(0, &context, self_value()).unwrap();
+    assert_eq!(r1, Value::Int(1), "first request should see counter = 1");
+
+    // Request 2: fresh VM from same snapshot — mutation did NOT leak
+    let mut vm2 = zehd_ward::vm::StackVm::with_globals(globals_snapshot.clone());
+    let r2 = vm2.execute_handler(0, &context, self_value()).unwrap();
+    assert_eq!(r2, Value::Int(1), "second request should also see counter = 1 (isolated)");
+}
+
 // ── Native Function Calls ────────────────────────────────────────
 
 /// Helper: compile with module types and native registry.
