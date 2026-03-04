@@ -19,6 +19,9 @@ pub struct ServerConfig {
 
     #[serde(default = "default_max_requests")]
     pub max_requests: usize,
+
+    #[serde(default = "default_request_logging")]
+    pub request_logging: bool,
 }
 
 impl Default for ServerConfig {
@@ -27,6 +30,7 @@ impl Default for ServerConfig {
             port: default_port(),
             host: default_host(),
             max_requests: default_max_requests(),
+            request_logging: default_request_logging(),
         }
     }
 }
@@ -73,6 +77,10 @@ fn default_host() -> String {
 
 fn default_max_requests() -> usize {
     1024
+}
+
+fn default_request_logging() -> bool {
+    true
 }
 
 fn default_routes() -> String {

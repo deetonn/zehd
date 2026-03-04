@@ -18,6 +18,7 @@ pub async fn handle_request(
     request: Request,
     route_table: Arc<RouteTable>,
     semaphore: Arc<Semaphore>,
+    request_logging: bool,
 ) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
@@ -30,14 +31,18 @@ pub async fn handle_request(
         Err(_) => {
             let status = StatusCode::SERVICE_UNAVAILABLE;
             let response = service_unavailable();
-            log_request(&method, &path, status, start.elapsed());
+            if request_logging {
+                log_request(&method, &path, status, start.elapsed());
+            }
             return response;
         }
     };
 
     let (status, response) = dispatch(request, &route_table).await;
 
-    log_request(&method, &path, status, start.elapsed());
+    if request_logging {
+        log_request(&method, &path, status, start.elapsed());
+    }
 
     response
 }

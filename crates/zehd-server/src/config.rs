@@ -10,4 +10,6 @@ pub struct ServerOptions {
     pub routes_dir: PathBuf,
     /// Maximum number of concurrent in-flight requests (OOM safety net).
     pub max_requests: usize,
+    /// Whether to log each request to stdout.
+    pub request_logging: bool,
 }

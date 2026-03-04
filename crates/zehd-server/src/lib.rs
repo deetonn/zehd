@@ -93,10 +93,11 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     // 7. Build axum app with fallback handler
     let table = Arc::clone(&route_table);
     let sem = Arc::clone(&semaphore);
+    let request_logging = options.request_logging;
     let app = Router::new().fallback(move |request| {
         let current = table.load_full();
         let sem = Arc::clone(&sem);
-        handler::handle_request(request, current, sem)
+        handler::handle_request(request, current, sem, request_logging)
     });
 
     // 8. Bind listener
@@ -157,6 +158,13 @@ fn print_banner(
         "→".green(),
         options.max_requests
     );
+    if !options.request_logging {
+        println!(
+            "  {}  request logging {}",
+            "→".green(),
+            "disabled".yellow()
+        );
+    }
 
     if !route_lines.is_empty() {
         println!();
