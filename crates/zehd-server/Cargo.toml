@@ -1,0 +1,22 @@
+[package]
+name = "zehd-server"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP runtime for the zehd programming language"
+
+[dependencies]
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
+zehd-sigil = { path = "../zehd-sigil" }
+zehd-rune = { path = "../zehd-rune" }
+zehd-ward = { path = "../zehd-ward" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+thiserror = "2"
+owo-colors = "4"
+notify = "7"
+arc-swap = "1"
+
+[dev-dependencies]
+tempfile = "3"

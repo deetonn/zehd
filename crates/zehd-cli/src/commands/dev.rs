@@ -7,7 +7,7 @@ use owo_colors::OwoColorize;
 use crate::cli::DevArgs;
 use crate::config::ZehdConfig;
 
-pub fn run(args: DevArgs) -> Result<()> {
+pub async fn run(args: DevArgs) -> Result<()> {
     let config_path = Path::new("zehd.toml");
     if !config_path.exists() {
         bail!(
@@ -21,23 +21,17 @@ pub fn run(args: DevArgs) -> Result<()> {
 
     let port = args.port.unwrap_or(config.server.port);
 
-    println!();
-    println!(
-        "  {} {}",
-        "zehd".cyan().bold(),
-        format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-    );
-    println!();
-    println!("  {}  http://{}:{}", "→".green(), config.server.host, port);
-    println!("  {}  {}", "routes".dimmed(), config.paths.routes);
-    println!("  {}  {}", "lib".dimmed(), config.paths.lib);
-    println!("  {}  {}", "static".dimmed(), config.paths.static_dir);
-    println!();
-    println!(
-        "  {}",
-        "Dev server is not yet implemented. Coming soon!".yellow()
-    );
-    println!();
+    // Resolve routes directory to absolute path
+    let routes_dir = std::env::current_dir()?.join(&config.paths.routes);
+    let routes_dir = routes_dir.canonicalize().unwrap_or(routes_dir);
+
+    let options = zehd_server::config::ServerOptions {
+        host: config.server.host,
+        port,
+        routes_dir,
+    };
+
+    zehd_server::start(options).await?;
 
     Ok(())
 }

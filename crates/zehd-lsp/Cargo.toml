@@ -1,0 +1,12 @@
+[package]
+name = "zehd-lsp"
+version = "0.1.0"
+edition = "2021"
+description = "Language server for the zehd programming language"
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
+zehd-sigil = { path = "../zehd-sigil" }

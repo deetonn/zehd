@@ -19,6 +19,9 @@ pub enum Commands {
 
     /// Start the development server
     Dev(DevArgs),
+
+    /// Start the language server (LSP) on stdin/stdout
+    Lsp,
 }
 
 #[derive(Parser)]

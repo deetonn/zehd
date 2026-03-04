@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/zehd-cli", "crates/zehd-tome", "crates/zehd-codex", "crates/zehd-sigil", "crates/zehd-rune", "crates/zehd-ward"]
+members = ["crates/zehd-cli", "crates/zehd-tome", "crates/zehd-codex", "crates/zehd-sigil", "crates/zehd-rune", "crates/zehd-ward", "crates/zehd-server", "crates/zehd-lsp"]
 resolver = "2"

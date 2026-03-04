@@ -15,4 +15,7 @@ cliclack = "0.3"
 owo-colors = "4"
 rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
+zehd-server = { path = "../zehd-server" }
+zehd-lsp = { path = "../zehd-lsp" }
