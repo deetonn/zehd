@@ -181,9 +181,19 @@ impl Checker {
                             )
                             .build(),
                         );
+                        // Set to Error to prevent cascading type errors.
+                        if let Some(sym) = self.scopes.lookup_mut(self.current_scope, export_name) {
+                            sym.ty = Type::Error;
+                        }
                     }
                 }
                 None => {
+                    // Set all imported names to Error to prevent cascading type errors.
+                    for n in &imp.names {
+                        if let Some(sym) = self.scopes.lookup_mut(self.current_scope, &n.name.name) {
+                            sym.ty = Type::Error;
+                        }
+                    }
                     self.errors.push(
                         TypeError::error(
                             TypeErrorCode::T103,

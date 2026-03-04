@@ -20,6 +20,51 @@ use types::Type;
 /// Maps module path (e.g. `"std"`, `"std::log"`) to its exported names and types.
 pub type ModuleTypes = HashMap<String, HashMap<String, Type>>;
 
+use types::FunctionType;
+
+/// Build the type signatures for the zehd standard library.
+///
+/// This is used by both the server (for compilation) and the LSP (for
+/// diagnostics). Implementations live in `zehd-server/src/std_lib.rs`.
+pub fn std_module_types() -> ModuleTypes {
+    let mut m = ModuleTypes::new();
+
+    // std — top-level standard library functions
+    m.insert(
+        "std".to_string(),
+        HashMap::from([(
+            "env".to_string(),
+            Type::Function(FunctionType {
+                params: vec![Type::String],
+                return_type: Box::new(Type::Option(Box::new(Type::String))),
+            }),
+        )]),
+    );
+
+    // std::log — logging functions
+    m.insert(
+        "std::log".to_string(),
+        HashMap::from([
+            (
+                "info".to_string(),
+                Type::Function(FunctionType {
+                    params: vec![Type::String],
+                    return_type: Box::new(Type::Unit),
+                }),
+            ),
+            (
+                "warn".to_string(),
+                Type::Function(FunctionType {
+                    params: vec![Type::String],
+                    return_type: Box::new(Type::Unit),
+                }),
+            ),
+        ]),
+    );
+
+    m
+}
+
 // ── Public API ──────────────────────────────────────────────────
 
 /// Result of type checking and optimizing a zehd program.

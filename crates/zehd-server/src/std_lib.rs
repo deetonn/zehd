@@ -1,84 +1,30 @@
-use std::collections::HashMap;
-
 use zehd_rune::registry::NativeRegistry;
 use zehd_rune::value::Value;
-use zehd_sigil::types::{FunctionType, Type};
 use zehd_sigil::ModuleTypes;
 use zehd_ward::NativeFn;
 
 /// Build the standard library: types, native registry, and implementations.
 ///
-/// This is the single source of truth for all native functions. Each function
-/// is registered once with its type signature, ID, and Rust implementation.
+/// Type signatures come from `zehd_sigil::std_module_types()` (shared with
+/// the LSP). This function adds the native registry IDs and Rust implementations.
 pub fn build_std() -> (ModuleTypes, NativeRegistry, Vec<NativeFn>) {
-    let mut module_types = ModuleTypes::new();
+    let module_types = zehd_sigil::std_module_types();
+
     let mut registry = NativeRegistry::new();
     let mut native_fns: Vec<NativeFn> = Vec::new();
 
-    // Helper: register a native function in all three structures.
-    let mut next_id: u16 = 0;
-    let mut register = |module: &str,
-                        name: &str,
-                        ty: Type,
-                        implementation: NativeFn,
-                        module_types: &mut ModuleTypes,
-                        registry: &mut NativeRegistry,
-                        native_fns: &mut Vec<NativeFn>| {
-        let id = next_id;
-        next_id += 1;
+    // Register each native function with a sequential ID.
+    // ORDER MATTERS — IDs must match the index in native_fns.
+    let natives: &[(&str, &str, NativeFn)] = &[
+        ("std", "env", native_env),
+        ("std::log", "info", native_log_info),
+        ("std::log", "warn", native_log_warn),
+    ];
 
-        module_types
-            .entry(module.to_string())
-            .or_insert_with(HashMap::new)
-            .insert(name.to_string(), ty);
-
-        registry.register(module, name, id);
-        native_fns.push(implementation);
-    };
-
-    // ── std::env ────────────────────────────────────────────────
-    // env(key: string) -> Option<string>
-    register(
-        "std",
-        "env",
-        Type::Function(FunctionType {
-            params: vec![Type::String],
-            return_type: Box::new(Type::Option(Box::new(Type::String))),
-        }),
-        native_env,
-        &mut module_types,
-        &mut registry,
-        &mut native_fns,
-    );
-
-    // ── std::log ────────────────────────────────────────────────
-    // log::info(msg: string) -> ()
-    register(
-        "std::log",
-        "info",
-        Type::Function(FunctionType {
-            params: vec![Type::String],
-            return_type: Box::new(Type::Unit),
-        }),
-        native_log_info,
-        &mut module_types,
-        &mut registry,
-        &mut native_fns,
-    );
-
-    // log::warn(msg: string) -> ()
-    register(
-        "std::log",
-        "warn",
-        Type::Function(FunctionType {
-            params: vec![Type::String],
-            return_type: Box::new(Type::Unit),
-        }),
-        native_log_warn,
-        &mut module_types,
-        &mut registry,
-        &mut native_fns,
-    );
+    for (i, (module, name, implementation)) in natives.iter().enumerate() {
+        registry.register(*module, *name, i as u16);
+        native_fns.push(*implementation);
+    }
 
     (module_types, registry, native_fns)
 }
