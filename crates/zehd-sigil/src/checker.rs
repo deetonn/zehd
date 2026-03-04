@@ -314,11 +314,16 @@ impl Checker {
     // ── Blocks ──────────────────────────────────────────────────
 
     fn check_block(&mut self, block: &Block) -> Type {
+        let mut last_stmt_ty = Type::Unit;
         for stmt in &block.stmts {
-            self.check_stmt(stmt);
+            last_stmt_ty = self.check_stmt(stmt);
         }
         if let Some(tail) = &block.tail_expr {
             self.check_expr(tail)
+        } else if matches!(last_stmt_ty, Type::Never) {
+            // Block ends with a diverging statement (return/break/continue),
+            // so the block itself diverges — don't report it as Unit.
+            Type::Never
         } else {
             Type::Unit
         }
@@ -326,11 +331,15 @@ impl Checker {
 
     // ── Statements ──────────────────────────────────────────────
 
-    fn check_stmt(&mut self, stmt: &Stmt) {
+    fn check_stmt(&mut self, stmt: &Stmt) -> Type {
         match &stmt.kind {
-            StmtKind::VarDecl(v) => self.check_var_decl(v),
+            StmtKind::VarDecl(v) => {
+                self.check_var_decl(v);
+                Type::Unit
+            }
             StmtKind::ExprStmt(es) => {
                 self.check_expr(&es.expr);
+                Type::Unit
             }
             StmtKind::Return(r) => {
                 let val_ty = if let Some(val) = &r.value {
@@ -343,9 +352,11 @@ impl Checker {
                         self.errors.push(e);
                     }
                 }
+                Type::Never
             }
             StmtKind::Break | StmtKind::Continue => {
                 // Validated in resolve pass.
+                Type::Never
             }
             StmtKind::For(f) => {
                 let iter_ty = self.check_expr(&f.iterable);
@@ -370,6 +381,7 @@ impl Checker {
                 self.define_in_current(&f.binding.name, elem_ty, false, f.binding.span);
                 self.check_block(&f.body);
                 self.exit_scope();
+                Type::Unit
             }
             StmtKind::While(w) => {
                 let cond_ty = self.check_expr(&w.condition);
@@ -377,6 +389,7 @@ impl Checker {
                 self.enter_scope(ScopeKind::Loop);
                 self.check_block(&w.body);
                 self.exit_scope();
+                Type::Unit
             }
             StmtKind::Assignment(a) => {
                 let target_ty = self.check_expr(&a.target);
@@ -409,6 +422,7 @@ impl Checker {
                 if let Err(e) = self.infer.unify(&value_ty, &target_ty, a.span) {
                     self.errors.push(e);
                 }
+                Type::Unit
             }
         }
     }

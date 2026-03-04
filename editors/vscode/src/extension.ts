@@ -1,3 +1,5 @@
+import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -9,7 +11,8 @@ let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("zehd.lsp");
-  const command = config.get<string>("path", "zehd");
+  const defaultPath = path.join(os.homedir(), ".local", "bin", "zehd");
+  const command = config.get<string>("path", defaultPath);
 
   const serverOptions: ServerOptions = {
     command,

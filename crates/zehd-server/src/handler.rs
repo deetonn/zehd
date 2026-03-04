@@ -131,7 +131,19 @@ fn log_request(
     duration: std::time::Duration,
 ) {
     let status_code = status.as_u16();
-    let ms = duration.as_millis();
+
+    let duration_str = {
+        let nanos = duration.as_nanos();
+        if nanos < 1_000 {
+            format!("{nanos}ns")
+        } else if nanos < 1_000_000 {
+            format!("{:.1}µs", nanos as f64 / 1_000.0)
+        } else if nanos < 1_000_000_000 {
+            format!("{:.2}ms", nanos as f64 / 1_000_000.0)
+        } else {
+            format!("{:.2}s", duration.as_secs_f64())
+        }
+    };
 
     // Color the status code: green 2xx, yellow 4xx, red 5xx
     let status_str = if status_code < 400 {
@@ -143,11 +155,11 @@ fn log_request(
     };
 
     println!(
-        "  {:<6} {} → {} in {}ms",
+        "  {:<6} {} → {} in {}",
         method.as_str().dimmed(),
         path,
         status_str,
-        ms
+        duration_str.dimmed()
     );
 }
 
