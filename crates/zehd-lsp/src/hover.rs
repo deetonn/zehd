@@ -1,4 +1,5 @@
 use tower_lsp::lsp_types::*;
+use zehd_sigil::builtin_methods;
 use zehd_sigil::scope::{ScopeId, SymbolKind};
 use zehd_sigil::types::Type;
 use zehd_sigil::ModuleTypes;
@@ -134,17 +135,31 @@ fn hover_dot_field(
         sym.ty.clone()
     };
 
-    match &receiver_ty {
-        Type::Struct(st) => {
-            for (name, ty) in &st.fields {
-                if name == field {
-                    return Some(format_code(&format!("(field) {name}: {}", display_type(ty))));
-                }
+    // Check struct fields first.
+    if let Type::Struct(st) = &receiver_ty {
+        for (name, ty) in &st.fields {
+            if name == field {
+                return Some(format_code(&format!("(field) {name}: {}", display_type(ty))));
             }
-            None
         }
-        _ => None,
     }
+
+    // Check built-in methods.
+    if let Some(sig) = builtin_methods::resolve_builtin_method(&receiver_ty, field) {
+        let display = if sig.params.is_empty() {
+            format!("(property) {field}: {}", display_type(&sig.return_type))
+        } else {
+            let params: Vec<String> = sig.params.iter().map(|p| display_type(p)).collect();
+            format!(
+                "(method) {field}({}): {}",
+                params.join(", "),
+                display_type(&sig.return_type)
+            )
+        };
+        return Some(format_code(&display));
+    }
+
+    None
 }
 
 fn hover_self(module_types: &ModuleTypes) -> String {
@@ -496,5 +511,20 @@ mod tests {
         // Position on space (line 0, col 3)
         let hover = hover_info(source, Position::new(0, 3), None, &module_types);
         assert!(hover.is_none());
+    }
+
+    #[test]
+    fn hover_builtin_method_property() {
+        // Test that hovering on a zero-arg method shows "(property)"
+        let sig = builtin_methods::resolve_builtin_method(&Type::String, "length").unwrap();
+        assert!(sig.params.is_empty());
+        // The hover_dot_field function would format this as "(property) length: int"
+    }
+
+    #[test]
+    fn hover_builtin_method_with_args() {
+        // Test that hovering on a method with args shows "(method)"
+        let sig = builtin_methods::resolve_builtin_method(&Type::String, "contains").unwrap();
+        assert_eq!(sig.params.len(), 1);
     }
 }

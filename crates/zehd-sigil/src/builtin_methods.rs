@@ -51,6 +51,37 @@ pub struct MethodSig {
 
 // ── Resolve ─────────────────────────────────────────────────────
 
+/// Method name + signature pair for listing all methods on a type.
+pub struct MethodEntry {
+    pub name: &'static str,
+    pub sig: MethodSig,
+}
+
+/// List all built-in methods available on a given type.
+/// Used by the LSP for completions and hover.
+pub fn builtin_methods_for_type(receiver_ty: &Type) -> Vec<MethodEntry> {
+    let names: &[&str] = match receiver_ty {
+        Type::String => &[
+            "length", "contains", "starts_with", "ends_with", "trim",
+            "to_upper", "to_lower", "split", "replace", "substring",
+            "index_of", "char_at",
+        ],
+        Type::List(_) => &[
+            "length", "push", "contains", "join", "reverse", "slice",
+        ],
+        Type::Int => &["to_string", "abs", "to_float"],
+        Type::Float => &["to_string", "abs", "floor", "ceil", "round"],
+        _ => return vec![],
+    };
+    names
+        .iter()
+        .filter_map(|name| {
+            resolve_builtin_method(receiver_ty, name)
+                .map(|sig| MethodEntry { name, sig })
+        })
+        .collect()
+}
+
 /// Resolve a built-in method by receiver type and method name.
 /// Returns `None` if no such method exists for the given type.
 pub fn resolve_builtin_method(receiver_ty: &Type, method_name: &str) -> Option<MethodSig> {

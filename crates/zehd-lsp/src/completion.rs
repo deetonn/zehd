@@ -1,4 +1,5 @@
 use tower_lsp::lsp_types::*;
+use zehd_sigil::builtin_methods;
 use zehd_sigil::scope::{ScopeId, SymbolKind};
 use zehd_sigil::types::Type;
 use zehd_sigil::ModuleTypes;
@@ -424,18 +425,39 @@ fn self_field_completions(module_types: &ModuleTypes) -> Vec<CompletionItem> {
 }
 
 fn field_completions(ty: &Type) -> Vec<CompletionItem> {
-    match ty {
-        Type::Struct(st) => st
-            .fields
-            .iter()
-            .map(|(name, field_ty)| CompletionItem {
-                label: name.clone(),
-                kind: Some(CompletionItemKind::FIELD),
-                detail: Some(display_type(field_ty)),
-                ..Default::default()
-            })
-            .collect(),
-        _ => vec![],
+    let mut items = Vec::new();
+
+    // Struct fields.
+    if let Type::Struct(st) = ty {
+        items.extend(st.fields.iter().map(|(name, field_ty)| CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(display_type(field_ty)),
+            ..Default::default()
+        }));
+    }
+
+    // Built-in methods for string, list, int, float.
+    for entry in builtin_methods::builtin_methods_for_type(ty) {
+        let detail = format_method_signature(entry.name, &entry.sig);
+        items.push(CompletionItem {
+            label: entry.name.to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(detail),
+            ..Default::default()
+        });
+    }
+
+    items
+}
+
+/// Format a method signature for display in completions/hover.
+fn format_method_signature(name: &str, sig: &builtin_methods::MethodSig) -> String {
+    if sig.params.is_empty() {
+        format!("{name}: {}", display_type(&sig.return_type))
+    } else {
+        let params: Vec<String> = sig.params.iter().map(|p| display_type(p)).collect();
+        format!("{name}({}) => {}", params.join(", "), display_type(&sig.return_type))
     }
 }
 
@@ -667,8 +689,39 @@ mod tests {
 
     #[test]
     fn field_completions_non_struct() {
-        let items = field_completions(&Type::Int);
+        // Non-struct types with no built-in methods return empty.
+        let items = field_completions(&Type::Unit);
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn field_completions_builtin_methods() {
+        // Built-in types should return their methods.
+        let items = field_completions(&Type::Int);
+        assert!(!items.is_empty());
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"to_string"));
+        assert!(labels.contains(&"abs"));
+        assert!(labels.contains(&"to_float"));
+    }
+
+    #[test]
+    fn field_completions_string_methods() {
+        let items = field_completions(&Type::String);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"length"));
+        assert!(labels.contains(&"contains"));
+        assert!(labels.contains(&"split"));
+        assert!(labels.contains(&"trim"));
+    }
+
+    #[test]
+    fn field_completions_list_methods() {
+        let items = field_completions(&Type::List(Box::new(Type::Int)));
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"length"));
+        assert!(labels.contains(&"push"));
+        assert!(labels.contains(&"join"));
     }
 
     #[test]
