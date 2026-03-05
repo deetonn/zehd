@@ -1,3 +1,4 @@
+pub mod builtin_methods;
 pub mod checker;
 pub mod error;
 pub mod infer;
@@ -8,7 +9,7 @@ pub mod types;
 
 use std::collections::HashMap;
 
-use zehd_codex::ast::Program;
+use zehd_codex::ast::{NodeId, Program};
 
 use checker::{Checker, TypeTable};
 use error::TypeError;
@@ -134,6 +135,8 @@ pub struct CheckResult {
     pub errors: Vec<TypeError>,
     /// The optimized program, if optimization succeeded.
     pub optimized_program: Option<Program>,
+    /// NodeId → method_id for built-in method calls.
+    pub method_calls: HashMap<NodeId, u16>,
 }
 
 impl CheckResult {
@@ -175,6 +178,7 @@ pub fn check(program: &Program, _source: &str, module_types: &ModuleTypes) -> Ch
     let mut errors = checker_result.errors;
     let scopes = checker_result.scopes;
     let types = checker_result.types;
+    let method_calls = checker_result.method_calls;
 
     // Pass 3: Optimize (clone the program since we mutate).
     let mut optimized = program.clone();
@@ -187,5 +191,6 @@ pub fn check(program: &Program, _source: &str, module_types: &ModuleTypes) -> Ch
         scopes,
         errors,
         optimized_program: Some(optimized),
+        method_calls,
     }
 }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use zehd_codex::ast::*;
 use zehd_tome::Span;
 
+use crate::builtin_methods;
 use crate::error::*;
 use crate::infer::InferCtx;
 use crate::resolve::ResolveResult;
@@ -33,6 +34,8 @@ pub struct Checker {
     /// Type parameters in scope for the current generic function.
     /// Maps name (e.g. "T") → Type::Var(n) (fresh inference var).
     generic_params: HashMap<String, Type>,
+    /// NodeId → method_id for built-in method calls resolved during type checking.
+    method_calls: HashMap<NodeId, u16>,
 }
 
 impl Checker {
@@ -48,6 +51,7 @@ impl Checker {
             type_defs: HashMap::new(),
             module_types,
             generic_params: HashMap::new(),
+            method_calls: HashMap::new(),
         }
     }
 
@@ -80,6 +84,7 @@ impl Checker {
             types: final_types,
             scopes: self.scopes,
             errors: self.errors,
+            method_calls: self.method_calls,
         }
     }
 
@@ -635,16 +640,35 @@ impl Checker {
                     }
                     Type::Error => Type::Error,
                     _ => {
-                        self.errors.push(
-                            TypeError::error(
-                                TypeErrorCode::T104,
-                                format!("type `{resolved}` has no fields"),
-                                field.span,
-                            )
-                            .label(object.span, format!("has type `{resolved}`"))
-                            .build(),
-                        );
-                        Type::Error
+                        // Check for zero-arg built-in property (e.g. list.length, str.length).
+                        if let Some(sig) = builtin_methods::resolve_builtin_method(&resolved, &field.name) {
+                            if sig.params.is_empty() {
+                                self.method_calls.insert(expr.id, sig.method_id);
+                                sig.return_type
+                            } else {
+                                self.errors.push(
+                                    TypeError::error(
+                                        TypeErrorCode::T115,
+                                        format!("`{}.{}` is a method, not a property — use `{}.{}()`",
+                                            resolved, field.name, resolved, field.name),
+                                        field.span,
+                                    )
+                                    .build(),
+                                );
+                                Type::Error
+                            }
+                        } else {
+                            self.errors.push(
+                                TypeError::error(
+                                    TypeErrorCode::T104,
+                                    format!("type `{resolved}` has no field or method `{}`", field.name),
+                                    field.span,
+                                )
+                                .label(object.span, format!("has type `{resolved}`"))
+                                .build(),
+                            );
+                            Type::Error
+                        }
                     }
                 }
             }
@@ -722,6 +746,44 @@ impl Checker {
                             );
                         }
                         return resolved_ty;
+                    }
+                }
+
+                // Intercept method calls: callee is FieldAccess on a built-in type.
+                if let ExprKind::FieldAccess { object, field } = &callee.kind {
+                    let obj_ty = self.check_expr(object);
+                    let resolved_obj = self.infer.resolve(&obj_ty);
+                    if let Some(sig) = builtin_methods::resolve_builtin_method(&resolved_obj, &field.name) {
+                        // Check arg count.
+                        if sig.params.len() != args.len() {
+                            self.errors.push(
+                                TypeError::error(
+                                    TypeErrorCode::T114,
+                                    format!(
+                                        "`{resolved_obj}.{}` expects {} argument{}, found {}",
+                                        field.name,
+                                        sig.params.len(),
+                                        if sig.params.len() == 1 { "" } else { "s" },
+                                        args.len()
+                                    ),
+                                    expr.span,
+                                )
+                                .build(),
+                            );
+                            return sig.return_type;
+                        }
+                        // Type-check args.
+                        for (arg, param_ty) in args.iter().zip(&sig.params) {
+                            let arg_ty = self.check_expr(arg);
+                            if let Err(e) = self.infer.unify(&arg_ty, param_ty, arg.span) {
+                                self.errors.push(e);
+                            }
+                        }
+                        self.method_calls.insert(expr.id, sig.method_id);
+                        // Record the object type for the callee FieldAccess too.
+                        self.types.insert(callee.id, sig.return_type.clone());
+                        self.types.insert(object.id, obj_ty);
+                        return sig.return_type;
                     }
                 }
 
@@ -1369,6 +1431,8 @@ pub struct CheckerResult {
     pub types: TypeTable,
     pub scopes: ScopeArena,
     pub errors: Vec<TypeError>,
+    /// NodeId → method_id for built-in method calls.
+    pub method_calls: HashMap<NodeId, u16>,
 }
 
 fn binary_op_symbol(op: BinaryOp) -> &'static str {

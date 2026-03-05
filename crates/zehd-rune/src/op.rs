@@ -102,6 +102,8 @@ pub enum Op {
     CallNative = 0x63,
     /// Call a user-defined module function. Operands: u16 module_fn_id + u8 arg_count.
     CallModule = 0x67,
+    /// Call a built-in method on a value. Operands: u16 method_id + u8 arg_count.
+    CallMethod = 0x64,
 
     // ── Data Structures (0x70–0x7F) ─────────────────────────────
     /// Create list from N stack values. Operand: u16 count.
@@ -220,6 +222,7 @@ impl Op {
             0x61 => Some(Op::Return),
             0x62 => Some(Op::Closure),
             0x63 => Some(Op::CallNative),
+            0x64 => Some(Op::CallMethod),
             0x67 => Some(Op::CallModule),
 
             0x70 => Some(Op::MakeList),
@@ -277,7 +280,7 @@ impl Op {
             Op::Call => 1,
 
             // u16 + u8 operand (native_fn_id + arg_count)
-            Op::CallNative | Op::CallModule => 3,
+            Op::CallNative | Op::CallModule | Op::CallMethod => 3,
 
             // Two u16 operands (type_idx + variant_idx)
             Op::MakeEnum | Op::TestVariant => 4,
@@ -339,6 +342,7 @@ impl fmt::Display for Op {
             Op::Return => "Return",
             Op::Closure => "Closure",
             Op::CallNative => "CallNative",
+            Op::CallMethod => "CallMethod",
             Op::CallModule => "CallModule",
             Op::MakeList => "MakeList",
             Op::MakeObject => "MakeObject",

@@ -85,6 +85,8 @@ pub struct Compiler {
     module_fn_registry: ModuleFnRegistry,
     /// Imported module function names → ModuleFnId (populated from imports).
     module_imports: HashMap<String, ModuleFnId>,
+    /// NodeId → method_id for built-in method calls (from type checker).
+    method_calls: HashMap<NodeId, u16>,
 }
 
 impl Compiler {
@@ -110,6 +112,7 @@ impl Compiler {
             native_imports: HashMap::new(),
             module_fn_registry,
             module_imports: HashMap::new(),
+            method_calls: check_result.method_calls,
         }
     }
 
@@ -656,12 +659,11 @@ impl Compiler {
         // at compile time if it's a literal, otherwise use runtime len.
         // For now, emit: GetLocal(list_slot), Len opcode... but we don't have Len.
         //
-        // Let's use GetField with "length" — a property the VM will support on lists.
+        // Use CallMethod with LIST_LENGTH (method_id 12) for list.length.
         self.builder
             .emit_u16(Op::GetLocal, list_slot, f.span);
-        let len_const = self.builder.add_constant(Value::String("length".to_string()));
         self.builder
-            .emit_u16(Op::GetField, len_const, f.span);
+            .emit_u16_u8(Op::CallMethod, 12, 0, f.span);
         self.builder
             .emit_u16(Op::GetLocal, idx_slot, f.span);
         // Stack: [length, idx]. We want idx < length, so emit: swap + GtInt.
@@ -809,10 +811,17 @@ impl Compiler {
 
             // ── Field Access ───────────────────────────────────
             ExprKind::FieldAccess { object, field } => {
-                self.compile_expr(object);
-                let name_idx = self.builder.add_constant(Value::String(field.name.clone()));
-                self.builder
-                    .emit_u16(Op::GetField, name_idx, expr.span);
+                // Check if this is a zero-arg built-in property (e.g. list.length).
+                if let Some(&method_id) = self.method_calls.get(&expr.id) {
+                    self.compile_expr(object);
+                    self.builder
+                        .emit_u16_u8(Op::CallMethod, method_id, 0, expr.span);
+                } else {
+                    self.compile_expr(object);
+                    let name_idx = self.builder.add_constant(Value::String(field.name.clone()));
+                    self.builder
+                        .emit_u16(Op::GetField, name_idx, expr.span);
+                }
             }
 
             // ── Index ──────────────────────────────────────────
@@ -826,6 +835,20 @@ impl Compiler {
             ExprKind::Call {
                 callee, type_args, args,
             } => {
+                // Intercept built-in method calls (e.g. str.contains("x")).
+                if let Some(&method_id) = self.method_calls.get(&expr.id) {
+                    if let ExprKind::FieldAccess { object, .. } = &callee.kind {
+                        self.compile_expr(object);
+                        for arg in args {
+                            self.compile_expr(arg);
+                        }
+                        let arg_count = args.len().min(u8::MAX as usize) as u8;
+                        self.builder
+                            .emit_u16_u8(Op::CallMethod, method_id, arg_count, expr.span);
+                        return;
+                    }
+                }
+
                 // Intercept provide/inject — emit dedicated opcodes.
                 if let ExprKind::Ident(name) = &callee.kind {
                     if name.name == "provide" && !type_args.is_empty()

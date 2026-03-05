@@ -637,6 +637,18 @@ impl StackVm {
 
                     self.stack.push(result);
                 }
+                Op::CallMethod => {
+                    let method_id = self.read_u16(chunk)?;
+                    let arg_count = self.read_u8(chunk)?;
+
+                    // Pop args, then pop receiver (receiver was pushed first).
+                    let start = self.stack.len().saturating_sub(arg_count as usize);
+                    let args: Vec<Value> = self.stack.drain(start..).collect();
+                    let receiver = self.pop()?;
+
+                    let result = crate::methods::dispatch_method(method_id, receiver, &args)?;
+                    self.stack.push(result);
+                }
                 Op::Return => {
                     let result = self.pop().unwrap_or(Value::Unit);
                     let frame = self.frames.pop().ok_or_else(|| {
@@ -775,18 +787,6 @@ impl StackVm {
                                     .build()
                                 })?;
                             self.stack.push(val);
-                        }
-                        Value::List(items) => {
-                            if name == "length" {
-                                self.stack.push(Value::Int(items.len() as i64));
-                            } else {
-                                return Err(RuntimeError::err(
-                                    RuntimeErrorCode::R120,
-                                    format!("List has no field '{name}'"),
-                                )
-                                .span_from_chunk(chunk, ip)
-                                .build());
-                            }
                         }
                         other => {
                             return Err(RuntimeError::err(
