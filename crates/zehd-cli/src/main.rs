@@ -18,5 +18,11 @@ async fn main() -> Result<()> {
             zehd_lsp::run().await;
             Ok(())
         }
+        Commands::Tokens(args) => commands::tokens::run(args),
+        Commands::Ast(args) => commands::ast::run(args),
+        Commands::Bytecode(args) => commands::bytecode::run(args),
+        Commands::Check(args) => commands::check::run(args),
+        Commands::Routes => commands::routes::run(),
+        Commands::Run(args) => commands::run::run(args),
     }
 }

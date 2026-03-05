@@ -184,7 +184,7 @@ fn globals_persist_across_handler_calls() {
         }
         "#,
     );
-    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]) };
+    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]), module_fns: std::sync::Arc::new(vec![]) };
     let mut vm = zehd_ward::vm::StackVm::new();
 
     // Run server_init to set up globals
@@ -230,7 +230,7 @@ fn globals_snapshot_isolates_requests() {
         }
         "#,
     );
-    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]) };
+    let context = zehd_ward::Context { module, native_fns: std::sync::Arc::new(vec![]), module_fns: std::sync::Arc::new(vec![]) };
 
     // Run server_init to populate globals
     let mut init_vm = zehd_ward::vm::StackVm::new();
@@ -287,7 +287,7 @@ fn compile_with_natives(
         panic!("type errors:\n{}", msgs.join("\n"));
     }
     let compile_result =
-        zehd_rune::compile(&parse_result.program, check_result, native_registry);
+        zehd_rune::compile(&parse_result.program, check_result, native_registry, &Default::default());
     if compile_result.has_errors() {
         let msgs: Vec<String> =
             compile_result.errors.iter().map(|e| format!("  {e}")).collect();
@@ -344,6 +344,7 @@ fn native_function_call() {
     let context = zehd_ward::Context {
         module,
         native_fns: Arc::new(native_fns),
+        module_fns: Arc::new(vec![]),
     };
     let mut vm = zehd_ward::vm::StackVm::new();
     let result = vm
@@ -396,6 +397,7 @@ fn native_env_returns_none_for_missing() {
     let context = zehd_ward::Context {
         module,
         native_fns: Arc::new(native_fns),
+        module_fns: Arc::new(vec![]),
     };
     let mut vm = zehd_ward::vm::StackVm::new();
     let result = vm.call_function(0, vec![], &context).unwrap();
@@ -414,6 +416,159 @@ fn import_unknown_module_errors() {
         .errors
         .iter()
         .any(|e| e.code.to_string() == "T103"));
+}
+
+#[test]
+fn call_module_function() {
+    use std::collections::HashMap;
+    use zehd_sigil::types::{FunctionType, Type};
+
+    // 1. Compile a "module" with fn add(a: int, b: int): int { a + b }
+    let module_source = r#"
+        fn add(a: int, b: int): int { a + b }
+    "#;
+    let module_parsed = zehd_codex::parse(module_source);
+    assert!(module_parsed.is_ok());
+    let module_checked = zehd_sigil::check(&module_parsed.program, module_source, &Default::default());
+    assert!(!module_checked.has_errors());
+    let module_compiled = zehd_rune::compile(
+        &module_parsed.program,
+        module_checked,
+        &Default::default(),
+        &Default::default(),
+    );
+    assert!(module_compiled.is_ok());
+    let compiled_module = Arc::new(module_compiled.module);
+
+    // The module has function 0 = "add"
+    assert_eq!(compiled_module.functions.len(), 1);
+    assert_eq!(compiled_module.functions[0].name, "add");
+
+    // 2. Build ModuleFunction entry
+    let module_fn = zehd_ward::ModuleFunction {
+        func_index: 0,
+        compiled_module: Arc::clone(&compiled_module),
+        globals: Arc::new(vec![]),
+    };
+
+    // 3. Register in ModuleFnRegistry
+    let mut module_fn_registry = zehd_rune::registry::ModuleFnRegistry::new();
+    module_fn_registry.register("lib::math", "add", 0);
+
+    // 4. Set up ModuleTypes so type checker knows about the import
+    let mut module_types = ModuleTypes::new();
+    module_types.insert(
+        "lib::math".to_string(),
+        HashMap::from([(
+            "add".to_string(),
+            Type::Function(FunctionType {
+                type_params: vec![],
+                type_param_vars: vec![],
+                params: vec![Type::Int, Type::Int],
+                return_type: Box::new(Type::Int),
+            }),
+        )]),
+    );
+
+    // 5. Compile a "route" that imports and calls add
+    let route_source = r#"
+        import { add } from lib::math;
+        fn test_add(x: int, y: int): int {
+            add(x, y)
+        }
+    "#;
+    let route_parsed = zehd_codex::parse(route_source);
+    assert!(route_parsed.is_ok());
+    let route_checked = zehd_sigil::check(&route_parsed.program, route_source, &module_types);
+    assert!(!route_checked.has_errors());
+    let route_compiled = zehd_rune::compile(
+        &route_parsed.program,
+        route_checked,
+        &Default::default(),
+        &module_fn_registry,
+    );
+    assert!(route_compiled.is_ok());
+
+    // 6. Execute via VM
+    let context = zehd_ward::Context {
+        module: route_compiled.module,
+        native_fns: Arc::new(vec![]),
+        module_fns: Arc::new(vec![module_fn]),
+    };
+    let mut vm = zehd_ward::vm::StackVm::new();
+    let result = vm.call_function(0, vec![Value::Int(3), Value::Int(4)], &context).unwrap();
+    assert_eq!(result, Value::Int(7));
+}
+
+#[test]
+fn call_module_preserves_caller_globals() {
+    use std::collections::HashMap;
+    use zehd_sigil::types::{FunctionType, Type};
+
+    // Module: fn get_ten(): int { 10 }
+    let module_source = "fn get_ten(): int { 10 }";
+    let mp = zehd_codex::parse(module_source);
+    let mc = zehd_sigil::check(&mp.program, module_source, &Default::default());
+    let mr = zehd_rune::compile(&mp.program, mc, &Default::default(), &Default::default());
+    let compiled_module = Arc::new(mr.module);
+
+    let module_fn = zehd_ward::ModuleFunction {
+        func_index: 0,
+        compiled_module: Arc::clone(&compiled_module),
+        globals: Arc::new(vec![]),
+    };
+
+    let mut module_fn_registry = zehd_rune::registry::ModuleFnRegistry::new();
+    module_fn_registry.register("lib::util", "get_ten", 0);
+
+    let mut module_types = ModuleTypes::new();
+    module_types.insert(
+        "lib::util".to_string(),
+        HashMap::from([(
+            "get_ten".to_string(),
+            Type::Function(FunctionType {
+                type_params: vec![],
+                type_param_vars: vec![],
+                params: vec![],
+                return_type: Box::new(Type::Int),
+            }),
+        )]),
+    );
+
+    // Route: const base = 100; fn test(): int { base + get_ten() }
+    let route_source = r#"
+        import { get_ten } from lib::util;
+        const base = 100;
+        fn test(): int {
+            base + get_ten()
+        }
+    "#;
+    let rp = zehd_codex::parse(route_source);
+    let rc = zehd_sigil::check(&rp.program, route_source, &module_types);
+    let rr = zehd_rune::compile(&rp.program, rc, &Default::default(), &module_fn_registry);
+
+    let context = zehd_ward::Context {
+        module: rr.module,
+        native_fns: Arc::new(vec![]),
+        module_fns: Arc::new(vec![module_fn]),
+    };
+
+    // Run server_init to set up globals (const base = 100)
+    let mut vm = zehd_ward::vm::StackVm::new();
+    if let Some(ref init_chunk) = context.module.server_init {
+        use zehd_ward::VmBackend;
+        vm.execute(init_chunk, &context).unwrap();
+    }
+
+    // Globals should have base = 100
+    assert_eq!(vm.globals()[0], Value::Int(100));
+
+    // Call test() — should return 110 (base 100 + get_ten 10)
+    let result = vm.call_function(0, vec![], &context).unwrap();
+    assert_eq!(result, Value::Int(110));
+
+    // Globals should still have base = 100 after module call
+    assert_eq!(vm.globals()[0], Value::Int(100));
 }
 
 #[test]

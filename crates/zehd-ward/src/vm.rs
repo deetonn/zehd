@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::error::{RuntimeError, RuntimeErrorCode};
 use crate::frame::{CallFrame, ChunkSource};
@@ -568,6 +569,72 @@ impl StackVm {
                         })?;
 
                     let result = func(&args)?;
+                    self.stack.push(result);
+                }
+                Op::CallModule => {
+                    let module_fn_id = self.read_u16(chunk)?;
+                    let arg_count = self.read_u8(chunk)?;
+
+                    let module_fn = context
+                        .module_fns
+                        .get(module_fn_id as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::err(
+                                RuntimeErrorCode::R152,
+                                format!("module function id {module_fn_id} out of bounds"),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build()
+                        })?;
+
+                    let func_entry = module_fn
+                        .compiled_module
+                        .functions
+                        .get(module_fn.func_index as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::err(
+                                RuntimeErrorCode::R152,
+                                format!(
+                                    "module function index {} out of bounds",
+                                    module_fn.func_index
+                                ),
+                            )
+                            .span_from_chunk(chunk, ip)
+                            .build()
+                        })?;
+
+                    let arity = func_entry.chunk.arity;
+                    if arg_count != arity {
+                        return Err(RuntimeError::err(
+                            RuntimeErrorCode::R150,
+                            format!("expected {arity} arguments but got {arg_count}"),
+                        )
+                        .span_from_chunk(chunk, ip)
+                        .build());
+                    }
+
+                    // Pop arguments from the stack.
+                    let start = self.stack.len().saturating_sub(arg_count as usize);
+                    let args: Vec<Value> = self.stack.drain(start..).collect();
+
+                    // Save caller's globals, load module globals.
+                    let saved_globals =
+                        std::mem::replace(&mut self.globals, (*module_fn.globals).clone());
+
+                    // Build a temporary context with the module's CompiledModule
+                    // so intra-module Op::Call resolves to the module's function table.
+                    let module_context = Context {
+                        module: (*module_fn.compiled_module).clone(),
+                        native_fns: Arc::clone(&context.native_fns),
+                        module_fns: Arc::clone(&context.module_fns),
+                    };
+
+                    let result =
+                        self.call_function(module_fn.func_index, args, &module_context)?;
+
+                    // Restore caller's globals.
+                    self.globals = saved_globals;
+
                     self.stack.push(result);
                 }
                 Op::Return => {

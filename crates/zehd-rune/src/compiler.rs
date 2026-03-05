@@ -11,7 +11,7 @@ use crate::chunk::{Chunk, ChunkBuilder};
 use crate::error::*;
 use crate::module::*;
 use crate::op::Op;
-use crate::registry::{NativeFnId, NativeRegistry};
+use crate::registry::{ModuleFnId, ModuleFnRegistry, NativeFnId, NativeRegistry};
 use crate::value::Value;
 
 // ── Local Variable ─────────────────────────────────────────────
@@ -81,10 +81,18 @@ pub struct Compiler {
     native_registry: NativeRegistry,
     /// Imported native function names → NativeFnId (populated from imports).
     native_imports: HashMap<String, NativeFnId>,
+    /// User module function registry (module_path, name) → ModuleFnId.
+    module_fn_registry: ModuleFnRegistry,
+    /// Imported module function names → ModuleFnId (populated from imports).
+    module_imports: HashMap<String, ModuleFnId>,
 }
 
 impl Compiler {
-    pub fn new(check_result: CheckResult, native_registry: NativeRegistry) -> Self {
+    pub fn new(
+        check_result: CheckResult,
+        native_registry: NativeRegistry,
+        module_fn_registry: ModuleFnRegistry,
+    ) -> Self {
         Self {
             types: check_result.types,
             errors: Vec::new(),
@@ -100,13 +108,16 @@ impl Compiler {
             next_enum_type_index: 0,
             native_registry,
             native_imports: HashMap::new(),
+            module_fn_registry,
+            module_imports: HashMap::new(),
         }
     }
 
     /// Compile a type-checked program into a CompiledModule and any errors.
     pub fn compile(mut self, program: &Program) -> (CompiledModule, Vec<CompileError>) {
-        // Pre-pass 0: collect native imports from import statements.
+        // Pre-pass 0: collect imports from import statements.
         self.collect_native_imports(&program.items);
+        self.collect_module_imports(&program.items);
 
         // Pre-pass 1: assign enum type/variant indices.
         self.collect_enum_indices(&program.items);
@@ -189,6 +200,28 @@ impl Compiler {
                         self.native_registry.lookup(&module_path, &name.name.name)
                     {
                         self.native_imports.insert(name.name.name.clone(), id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_module_imports(&mut self, items: &[Item]) {
+        for item in items {
+            if let ItemKind::Import(imp) = &item.kind {
+                let module_path = imp
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+
+                for name in &imp.names {
+                    if let Some(id) =
+                        self.module_fn_registry.lookup(&module_path, &name.name.name)
+                    {
+                        self.module_imports.insert(name.name.name.clone(), id);
                     }
                 }
             }
@@ -824,6 +857,19 @@ impl Compiler {
                         let arg_count = args.len().min(u8::MAX as usize) as u8;
                         self.builder
                             .emit_u16_u8(Op::CallNative, native_id, arg_count, expr.span);
+                        return;
+                    }
+                }
+
+                // Check if the callee is a user module import.
+                if let ExprKind::Ident(name) = &callee.kind {
+                    if let Some(&module_fn_id) = self.module_imports.get(&name.name) {
+                        for arg in args {
+                            self.compile_expr(arg);
+                        }
+                        let arg_count = args.len().min(u8::MAX as usize) as u8;
+                        self.builder
+                            .emit_u16_u8(Op::CallModule, module_fn_id, arg_count, expr.span);
                         return;
                     }
                 }

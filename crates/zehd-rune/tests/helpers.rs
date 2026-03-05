@@ -21,7 +21,7 @@ pub fn compile_ok(source: &str) -> CompileResult {
             format_type_errors(&check_result.errors)
         );
     }
-    let result = zehd_rune::compile(&parse_result.program, check_result, &Default::default());
+    let result = zehd_rune::compile(&parse_result.program, check_result, &Default::default(), &Default::default());
     if result.has_errors() {
         panic!(
             "compile errors:\n{}",
@@ -48,7 +48,7 @@ pub fn compile_with_errors(source: &str) -> CompileResult {
             format_type_errors(&check_result.errors)
         );
     }
-    zehd_rune::compile(&parse_result.program, check_result, &Default::default())
+    zehd_rune::compile(&parse_result.program, check_result, &Default::default(), &Default::default())
 }
 
 /// Get the compiled module from a source string.

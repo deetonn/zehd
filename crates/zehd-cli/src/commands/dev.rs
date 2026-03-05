@@ -1,39 +1,21 @@
-use std::fs;
-use std::path::Path;
-
-use anyhow::{bail, Result};
-use owo_colors::OwoColorize;
+use anyhow::Result;
 
 use crate::cli::DevArgs;
-use crate::config::ZehdConfig;
+use crate::config::load_project_config;
 
 pub async fn run(args: DevArgs) -> Result<()> {
-    let config_path = Path::new("zehd.toml");
-    if !config_path.exists() {
-        bail!(
-            "No {} found in the current directory. Are you in a zehd project?",
-            "zehd.toml".bold()
-        );
-    }
+    let pc = load_project_config()?;
 
-    let raw = fs::read_to_string(config_path)?;
-    let config: ZehdConfig = toml::from_str(&raw)?;
-
-    let port = args.port.unwrap_or(config.server.port);
-
-    // Resolve routes directory to absolute path
-    let routes_dir = std::env::current_dir()?.join(&config.paths.routes);
-    let routes_dir = routes_dir.canonicalize().unwrap_or(routes_dir);
-
-    let project_dir = std::env::current_dir()?;
+    let port = args.port.unwrap_or(pc.config.server.port);
 
     let options = zehd_server::config::ServerOptions {
-        host: config.server.host,
+        host: pc.config.server.host,
         port,
-        routes_dir,
-        project_dir,
-        max_requests: config.server.max_requests,
-        request_logging: config.server.request_logging,
+        routes_dir: pc.routes_dir,
+        project_dir: pc.project_dir,
+        max_requests: pc.config.server.max_requests,
+        request_logging: pc.config.server.request_logging,
+        module_dirs: pc.module_dirs,
     };
 
     zehd_server::start(options).await?;

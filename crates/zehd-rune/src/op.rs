@@ -100,6 +100,8 @@ pub enum Op {
     Closure = 0x62,
     /// Call a native (Rust) function. Operands: u16 native_fn_id + u8 arg_count.
     CallNative = 0x63,
+    /// Call a user-defined module function. Operands: u16 module_fn_id + u8 arg_count.
+    CallModule = 0x67,
 
     // ── Data Structures (0x70–0x7F) ─────────────────────────────
     /// Create list from N stack values. Operand: u16 count.
@@ -218,6 +220,7 @@ impl Op {
             0x61 => Some(Op::Return),
             0x62 => Some(Op::Closure),
             0x63 => Some(Op::CallNative),
+            0x67 => Some(Op::CallModule),
 
             0x70 => Some(Op::MakeList),
             0x71 => Some(Op::MakeObject),
@@ -274,7 +277,7 @@ impl Op {
             Op::Call => 1,
 
             // u16 + u8 operand (native_fn_id + arg_count)
-            Op::CallNative => 3,
+            Op::CallNative | Op::CallModule => 3,
 
             // Two u16 operands (type_idx + variant_idx)
             Op::MakeEnum | Op::TestVariant => 4,
@@ -336,6 +339,7 @@ impl fmt::Display for Op {
             Op::Return => "Return",
             Op::Closure => "Closure",
             Op::CallNative => "CallNative",
+            Op::CallModule => "CallModule",
             Op::MakeList => "MakeList",
             Op::MakeObject => "MakeObject",
             Op::GetField => "GetField",
@@ -434,4 +438,31 @@ pub fn decode_ops(code: &[u8]) -> Vec<Instruction> {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn call_module_opcode_roundtrip() {
+        assert_eq!(Op::from_byte(0x67), Some(Op::CallModule));
+        assert_eq!(Op::CallModule.operand_size(), 3);
+    }
+
+    #[test]
+    fn call_module_encode_decode() {
+        let mut code = vec![0x67]; // CallModule
+        code.extend_from_slice(&encode_u16(42)); // fn_id = 42
+        code.push(3); // argc = 3
+
+        let instructions = decode_ops(&code);
+        assert_eq!(instructions.len(), 1);
+        assert_eq!(instructions[0], Instruction::U16U8(Op::CallModule, 42, 3));
+    }
+
+    #[test]
+    fn call_module_display() {
+        assert_eq!(format!("{}", Op::CallModule), "CallModule");
+    }
 }

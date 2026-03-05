@@ -12,7 +12,7 @@ use zehd_sigil::CheckResult;
 use compiler::Compiler;
 use error::CompileError;
 use module::CompiledModule;
-use registry::NativeRegistry;
+use registry::{ModuleFnRegistry, NativeRegistry};
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -54,12 +54,13 @@ pub fn compile(
     program: &Program,
     check_result: CheckResult,
     native_registry: &NativeRegistry,
+    module_fn_registry: &ModuleFnRegistry,
 ) -> CompileResult {
     // Take the optimized program out, falling back to the original.
     let optimized = check_result.optimized_program.clone();
     let target = optimized.as_ref().unwrap_or(program);
 
-    let compiler = Compiler::new(check_result, native_registry.clone());
+    let compiler = Compiler::new(check_result, native_registry.clone(), module_fn_registry.clone());
     let (module, errors) = compiler.compile(target);
 
     CompileResult { module, errors }

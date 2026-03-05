@@ -14,4 +14,7 @@ pub struct ServerOptions {
     pub max_requests: usize,
     /// Whether to log each request to stdout.
     pub request_logging: bool,
+    /// Module directories: (namespace, absolute_path) pairs.
+    /// e.g. [("lib", "/project/lib")]
+    pub module_dirs: Vec<(String, PathBuf)>,
 }

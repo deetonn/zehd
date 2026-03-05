@@ -4,6 +4,7 @@ use tower_lsp::lsp_types::{
 };
 use zehd_codex::error::Severity as ParseSeverity;
 use zehd_sigil::error::Severity as TypeSeverity;
+use zehd_sigil::ModuleTypes;
 use zehd_tome::token::Span;
 
 /// Maps byte offsets in source text to LSP line/column positions.
@@ -41,6 +42,31 @@ impl LineIndex {
         Position::new(line as u32, col_utf16)
     }
 
+    /// Convert an LSP Position (0-based line, UTF-16 column) to a byte offset.
+    pub fn position_to_offset(&self, pos: Position, source: &str) -> Option<u32> {
+        let line = pos.line as usize;
+        if line >= self.line_starts.len() {
+            return None;
+        }
+        let line_start = self.line_starts[line] as usize;
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .map(|&s| s as usize)
+            .unwrap_or(source.len());
+        let line_text = &source[line_start..line_end];
+        let mut utf16_count = 0u32;
+        let mut byte_offset = line_start;
+        for ch in line_text.chars() {
+            if utf16_count >= pos.character {
+                break;
+            }
+            utf16_count += ch.len_utf16() as u32;
+            byte_offset += ch.len_utf8();
+        }
+        Some(byte_offset as u32)
+    }
+
     /// Convert a Span to an LSP Range.
     pub fn span_to_range(&self, span: Span, source: &str) -> Range {
         Range::new(
@@ -50,8 +76,33 @@ impl LineIndex {
     }
 }
 
+/// Analysis data cached from a parse+check pass, for use by completion.
+pub struct AnalysisResult {
+    pub scopes: zehd_sigil::scope::ScopeArena,
+    pub types: zehd_sigil::checker::TypeTable,
+}
+
+/// Run parse + type-check on `source` and return LSP diagnostics plus analysis data.
+pub fn compute_with_analysis(
+    uri: &Url,
+    source: &str,
+    module_types: &ModuleTypes,
+) -> (Vec<Diagnostic>, Option<AnalysisResult>) {
+    let diagnostics = compute_inner(uri, source, module_types, true);
+    diagnostics
+}
+
 /// Run parse + type-check on `source` and return LSP diagnostics.
-pub fn compute(uri: &Url, source: &str) -> Vec<Diagnostic> {
+pub fn compute(uri: &Url, source: &str, module_types: &ModuleTypes) -> Vec<Diagnostic> {
+    compute_inner(uri, source, module_types, false).0
+}
+
+fn compute_inner(
+    uri: &Url,
+    source: &str,
+    module_types: &ModuleTypes,
+    capture_analysis: bool,
+) -> (Vec<Diagnostic>, Option<AnalysisResult>) {
     let line_index = LineIndex::new(source);
     let mut diagnostics = Vec::new();
 
@@ -98,8 +149,7 @@ pub fn compute(uri: &Url, source: &str) -> Vec<Diagnostic> {
     }
 
     // Only run type-check if parse produced an AST (it always does, but may be partial).
-    let module_types = zehd_sigil::std_module_types();
-    let check_result = zehd_sigil::check(&parse_result.program, source, &module_types);
+    let check_result = zehd_sigil::check(&parse_result.program, source, module_types);
 
     for err in &check_result.errors {
         let severity = match err.severity {
@@ -141,7 +191,16 @@ pub fn compute(uri: &Url, source: &str) -> Vec<Diagnostic> {
         });
     }
 
-    diagnostics
+    let analysis = if capture_analysis {
+        Some(AnalysisResult {
+            scopes: check_result.scopes,
+            types: check_result.types,
+        })
+    } else {
+        None
+    };
+
+    (diagnostics, analysis)
 }
 
 #[cfg(test)]
@@ -191,7 +250,8 @@ mod tests {
     fn compute_returns_parse_errors() {
         let uri = Url::parse("file:///test.z").unwrap();
         let source = "let x = ;";
-        let diagnostics = compute(&uri, source);
+        let module_types = zehd_sigil::std_module_types();
+        let diagnostics = compute(&uri, source, &module_types);
         assert!(!diagnostics.is_empty());
         // Should have source "zehd"
         assert_eq!(diagnostics[0].source.as_deref(), Some("zehd"));
@@ -207,7 +267,8 @@ mod tests {
     fn compute_valid_source_no_parse_errors() {
         let uri = Url::parse("file:///test.z").unwrap();
         let source = "let x = 42;";
-        let diagnostics = compute(&uri, source);
+        let module_types = zehd_sigil::std_module_types();
+        let diagnostics = compute(&uri, source, &module_types);
         // No parse errors for valid syntax — may still have type errors,
         // but should not have parse errors.
         let parse_errors: Vec<_> = diagnostics

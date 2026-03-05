@@ -1,9 +1,9 @@
-mod compile;
-mod discover;
+pub mod compile;
+pub mod discover;
 mod handler;
 mod json;
 mod router;
-mod std_lib;
+pub mod std_lib;
 mod watcher;
 
 pub mod config;
@@ -55,9 +55,32 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
         );
     }
 
+    // 1b. Discover and compile user modules
+    let discovered_modules = discover::discover_modules(&options.module_dirs)?;
+    let compiled_mods = compile::compile_modules(
+        discovered_modules,
+        &module_types,
+        &native_registry,
+        &native_fns,
+    )?;
+    let module_types = compiled_mods.module_types;
+    let module_fn_registry = compiled_mods.module_fn_registry;
+    let module_fns: Arc<Vec<zehd_ward::ModuleFunction>> = Arc::new(compiled_mods.module_fns);
+
+    if !options.module_dirs.is_empty() {
+        let mod_count = module_fns.len();
+        if mod_count > 0 {
+            eprintln!(
+                "  {}  compiled {} module function(s)",
+                "→".green(),
+                mod_count,
+            );
+        }
+    }
+
     // 2. Compile all routes
     let (compiled, errors) =
-        compile::compile_routes(routes, &module_types, &native_registry);
+        compile::compile_routes(routes, &module_types, &native_registry, &module_fn_registry);
 
     if !errors.is_empty() {
         // Print each error before failing
@@ -82,7 +105,7 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
     }
 
     // 3. Build route table (runs server_init for each route)
-    let route_table = RouteTable::build(compiled, Arc::clone(&native_fns), &global_di)?;
+    let route_table = RouteTable::build(compiled, Arc::clone(&native_fns), Arc::clone(&module_fns), &global_di)?;
 
     // 4. Collect route info for the banner
     let mut route_lines: Vec<(String, String)> = Vec::new();
@@ -128,7 +151,9 @@ pub async fn start(options: ServerOptions) -> Result<(), StartupError> {
         Arc::clone(&route_table),
         module_types,
         native_registry,
+        module_fn_registry,
         Arc::clone(&native_fns),
+        Arc::clone(&module_fns),
         global_di,
     )?;
 
@@ -174,7 +199,7 @@ fn process_main_z(
         source,
     };
 
-    let module = compile::compile_one(&route, module_types, native_registry).map_err(|msgs| {
+    let module = compile::compile_one(&route, module_types, native_registry, &Default::default()).map_err(|msgs| {
         StartupError::InitFailed {
             url_path: "main.z".to_string(),
             message: msgs.join("; "),
@@ -184,6 +209,7 @@ fn process_main_z(
     let context = zehd_ward::Context {
         module,
         native_fns: Arc::clone(native_fns),
+        module_fns: Arc::new(vec![]),
     };
 
     let mut vm = StackVm::new();

@@ -151,6 +151,11 @@ impl ScopeArena {
     pub fn symbols(&self, scope_id: ScopeId) -> impl Iterator<Item = (&String, &Symbol)> {
         self.get(scope_id).symbols.iter()
     }
+
+    /// Return the number of scopes in the arena.
+    pub fn scope_count(&self) -> usize {
+        self.scopes.len()
+    }
 }
 
 impl Default for ScopeArena {

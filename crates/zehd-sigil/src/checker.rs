@@ -57,6 +57,14 @@ impl Checker {
         // when resolving type annotations in functions and variable declarations.
         self.collect_type_defs(&program.items);
 
+        // Update TypeDef symbols in the scope arena with resolved struct types
+        // so downstream consumers (e.g. LSP hover) see the real type, not Unit.
+        for (name, st) in &self.type_defs {
+            if let Some(sym) = self.scopes.lookup_mut(self.current_scope, name) {
+                sym.ty = Type::Struct(st.clone());
+            }
+        }
+
         // Pre-pass: collect function signatures so forward references work.
         self.collect_function_signatures(&program.items);
 

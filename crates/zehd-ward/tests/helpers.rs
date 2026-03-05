@@ -23,7 +23,7 @@ pub fn compile_module(source: &str) -> CompiledModule {
             check_result.errors.iter().map(|e| format!("  {e}")).collect();
         panic!("type errors:\n{}", msgs.join("\n"));
     }
-    let compile_result = zehd_rune::compile(&parse_result.program, check_result, &Default::default());
+    let compile_result = zehd_rune::compile(&parse_result.program, check_result, &Default::default(), &Default::default());
     if compile_result.has_errors() {
         let msgs: Vec<String> =
             compile_result.errors.iter().map(|e| format!("  {e}")).collect();
@@ -35,7 +35,7 @@ pub fn compile_module(source: &str) -> CompiledModule {
 /// Compile source and call the function at the given index with provided args.
 pub fn call_fn(source: &str, func_index: u16, args: Vec<Value>) -> Value {
     let module = compile_module(source);
-    let context = Context { module, native_fns: Arc::new(vec![]) };
+    let context = Context { module, native_fns: Arc::new(vec![]), module_fns: Arc::new(vec![]) };
     let mut vm = StackVm::new();
     vm.call_function(func_index, args, &context)
         .unwrap_or_else(|e| panic!("runtime error: {e}"))
@@ -53,7 +53,7 @@ pub fn run_init(source: &str) -> Value {
         .server_init
         .as_ref()
         .expect("no server_init chunk");
-    let context = Context { module: module.clone(), native_fns: Arc::new(vec![]) };
+    let context = Context { module: module.clone(), native_fns: Arc::new(vec![]), module_fns: Arc::new(vec![]) };
     let mut vm = StackVm::new();
     use zehd_ward::VmBackend;
     vm.execute(chunk, &context)
@@ -63,7 +63,7 @@ pub fn run_init(source: &str) -> Value {
 /// Compile source, run server_init, then execute handler at index.
 pub fn run_handler(source: &str, handler_index: usize) -> Value {
     let module = compile_module(source);
-    let context = Context { module, native_fns: Arc::new(vec![]) };
+    let context = Context { module, native_fns: Arc::new(vec![]), module_fns: Arc::new(vec![]) };
     let mut vm = StackVm::new();
 
     // Run server_init first if present
@@ -93,7 +93,7 @@ pub fn run_handler(source: &str, handler_index: usize) -> Value {
 /// Compile source and call the first function, expecting a RuntimeError.
 pub fn call_fn0_err(source: &str, args: Vec<Value>) -> RuntimeError {
     let module = compile_module(source);
-    let context = Context { module, native_fns: Arc::new(vec![]) };
+    let context = Context { module, native_fns: Arc::new(vec![]), module_fns: Arc::new(vec![]) };
     let mut vm = StackVm::new();
     vm.call_function(0, args, &context)
         .expect_err("expected runtime error but got success")
@@ -102,7 +102,7 @@ pub fn call_fn0_err(source: &str, args: Vec<Value>) -> RuntimeError {
 /// Get a fresh VM and context from source.
 pub fn vm_and_context(source: &str) -> (StackVm, Context) {
     let module = compile_module(source);
-    let context = Context { module, native_fns: Arc::new(vec![]) };
+    let context = Context { module, native_fns: Arc::new(vec![]), module_fns: Arc::new(vec![]) };
     let vm = StackVm::new();
     (vm, context)
 }
@@ -148,7 +148,7 @@ pub fn compile_module_with_std(source: &str) -> CompiledModule {
             check_result.errors.iter().map(|e| format!("  {e}")).collect();
         panic!("type errors:\n{}", msgs.join("\n"));
     }
-    let compile_result = zehd_rune::compile(&parse_result.program, check_result, &native_registry);
+    let compile_result = zehd_rune::compile(&parse_result.program, check_result, &native_registry, &Default::default());
     if compile_result.has_errors() {
         let msgs: Vec<String> =
             compile_result.errors.iter().map(|e| format!("  {e}")).collect();
@@ -160,5 +160,5 @@ pub fn compile_module_with_std(source: &str) -> CompiledModule {
 /// Create a Context with std native functions.
 pub fn context_with_std(module: CompiledModule) -> Context {
     let (_, _, native_fns) = build_test_std();
-    Context { module, native_fns: Arc::new(native_fns) }
+    Context { module, native_fns: Arc::new(native_fns), module_fns: Arc::new(vec![]) }
 }

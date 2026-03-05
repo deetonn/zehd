@@ -48,6 +48,12 @@ pub enum StartupError {
         errors: Vec<RouteCompileError>,
     },
 
+    #[error("module compilation failed for {module_path}: {message}")]
+    ModuleCompileFailed { module_path: String, message: String },
+
+    #[error("circular dependency detected: {cycle}")]
+    CircularDependency { cycle: String },
+
     #[error("server_init failed for {url_path}: {message}")]
     InitFailed { url_path: String, message: String },
 

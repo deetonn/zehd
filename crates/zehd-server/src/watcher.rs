@@ -7,10 +7,10 @@ use arc_swap::ArcSwap;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use owo_colors::OwoColorize;
 use tokio::sync::mpsc;
-use zehd_rune::registry::NativeRegistry;
+use zehd_rune::registry::{ModuleFnRegistry, NativeRegistry};
 use zehd_rune::value::Value;
 use zehd_sigil::ModuleTypes;
-use zehd_ward::NativeFn;
+use zehd_ward::{ModuleFunction, NativeFn};
 
 use crate::compile;
 use crate::discover;
@@ -29,7 +29,9 @@ pub fn spawn(
     route_table: Arc<ArcSwap<RouteTable>>,
     module_types: ModuleTypes,
     native_registry: NativeRegistry,
+    module_fn_registry: ModuleFnRegistry,
     native_fns: Arc<Vec<NativeFn>>,
+    module_fns: Arc<Vec<ModuleFunction>>,
     global_di: HashMap<String, Value>,
 ) -> Result<RecommendedWatcher, StartupError> {
     let (tx, rx) = mpsc::channel::<notify::Event>(64);
@@ -59,7 +61,9 @@ pub fn spawn(
         route_table,
         module_types,
         native_registry,
+        module_fn_registry,
         native_fns,
+        module_fns,
         global_di,
     ));
 
@@ -73,7 +77,9 @@ async fn watch_loop(
     route_table: Arc<ArcSwap<RouteTable>>,
     module_types: ModuleTypes,
     native_registry: NativeRegistry,
+    module_fn_registry: ModuleFnRegistry,
     native_fns: Arc<Vec<NativeFn>>,
+    module_fns: Arc<Vec<ModuleFunction>>,
     global_di: HashMap<String, Value>,
 ) {
     loop {
@@ -118,7 +124,7 @@ async fn watch_loop(
         };
 
         let (compiled, errors) =
-            compile::compile_routes(routes, &module_types, &native_registry);
+            compile::compile_routes(routes, &module_types, &native_registry, &module_fn_registry);
 
         if !errors.is_empty() {
             for err in &errors {
@@ -137,7 +143,7 @@ async fn watch_loop(
             continue;
         }
 
-        match RouteTable::build(compiled, Arc::clone(&native_fns), &global_di) {
+        match RouteTable::build(compiled, Arc::clone(&native_fns), Arc::clone(&module_fns), &global_di) {
             Ok(new_table) => {
                 route_table.store(Arc::new(new_table));
                 let ms = start.elapsed().as_millis();

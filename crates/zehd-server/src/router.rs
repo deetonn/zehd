@@ -4,7 +4,7 @@ use std::sync::Arc;
 use zehd_codex::ast::HttpMethod as ZehdMethod;
 use zehd_rune::value::Value;
 use zehd_ward::vm::StackVm;
-use zehd_ward::{Context, NativeFn, VmBackend};
+use zehd_ward::{Context, ModuleFunction, NativeFn, VmBackend};
 
 use crate::compile::CompiledRoute;
 use crate::error::StartupError;
@@ -89,6 +89,7 @@ impl RouteTable {
     pub fn build(
         compiled_routes: Vec<CompiledRoute>,
         native_fns: Arc<Vec<NativeFn>>,
+        module_fns: Arc<Vec<ModuleFunction>>,
         global_di: &HashMap<String, Value>,
     ) -> Result<Self, StartupError> {
         let mut routes = HashMap::new();
@@ -112,6 +113,7 @@ impl RouteTable {
             let context = Arc::new(Context {
                 module: route.module,
                 native_fns: Arc::clone(&native_fns),
+                module_fns: Arc::clone(&module_fns),
             });
 
             // Run server_init on a temp VM to populate globals, then snapshot.

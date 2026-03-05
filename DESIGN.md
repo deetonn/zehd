@@ -472,6 +472,35 @@ import { proxy, use, rateLimit } from std;
 
 **Only destructured imports are supported.** No default imports, no wildcard imports. Every imported name is explicit and traceable.
 
+#### User-Defined Modules
+
+User code in module directories (default: `lib/`) can be imported by routes and other modules. The directory name becomes the import namespace:
+
+```
+// lib/math.z → import from lib::math
+import { add, multiply } from lib::math;
+
+// lib/auth/password.z → import from lib::auth::password
+import { hash, verify } from lib::auth::password;
+```
+
+**Export rules:** All top-level functions and types in a module file are automatically exported. No `export` keyword is needed.
+
+**Module scoping:** Module files have the same two-scope model as route files. Top-level code (server scope) runs once at startup — modules can call `provide<T>()` for DI. Functions are callable from importers.
+
+**Compilation order:** Modules are compiled in dependency order with cycle detection. A module that imports from another module will be compiled after its dependency. Circular dependencies are a compile error.
+
+**Configuration:** Module directories are configured in `zehd.toml`:
+
+```toml
+[paths]
+modules = ["lib"]       # default: ["lib"]
+```
+
+Each entry in the list is both the directory name and the import namespace prefix.
+
+**Inter-module imports:** Modules can import from other modules in the same or different module directories.
+
 Third-party modules TBD — package manager and registry are future concerns.
 
 ---
@@ -665,7 +694,7 @@ Server-scoped state (DB pools, caches, config) flows into route handlers via a t
 ```
 // main.z
 import { provide } from std;
-import { DbPool, createPool } from lib/db;
+import { DbPool, createPool } from lib::db;
 
 const pool = createPool({ url: env("DATABASE_URL") });
 provide<DbPool>(pool);   // available to all routes
@@ -674,7 +703,7 @@ provide<DbPool>(pool);   // available to all routes
 ```
 // routes/api/init.z
 import { provide } from std;
-import { Cache, createCache } from lib/cache;
+import { Cache, createCache } from lib::cache;
 
 init {
   provide<Cache>(createCache({ ttl: 5m }));   // available under /api only
@@ -686,8 +715,8 @@ init {
 ```
 // routes/api/users/[id].z
 import { inject } from std;
-import { DbPool } from lib/db;
-import { Cache } from lib/cache;
+import { DbPool } from lib::db;
+import { Cache } from lib::cache;
 
 const db = inject<DbPool>();      // resolved at load time, once
 const cache = inject<Cache>();    // provided by api/init.z
@@ -722,14 +751,14 @@ post {
 ```
 // lib/services.z
 import { inject } from std;
-import { DbPool } from lib/db;
+import { DbPool } from lib::db;
 
 fn getDb(): DbPool { return inject<DbPool>(); }
 ```
 
 ```
 // routes/api/users/[id].z
-import { getDb } from lib/services;
+import { getDb } from lib::services;
 
 const db = getDb();
 
@@ -847,7 +876,7 @@ host = "0.0.0.0"
 
 [paths]
 routes = "./routes"
-lib = "./lib"
+modules = ["lib"]
 static = "./public"
 
 [paths.ignore]

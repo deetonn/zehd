@@ -7,6 +7,11 @@ description = "Language server for the zehd programming language"
 [dependencies]
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 zehd-tome = { path = "../zehd-tome" }
 zehd-codex = { path = "../zehd-codex" }
 zehd-sigil = { path = "../zehd-sigil" }
+
+[dev-dependencies]
+tempfile = "3"

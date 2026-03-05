@@ -2058,8 +2058,13 @@ dependencies = [
  "serde",
  "tokio",
  "toml",
+ "zehd-codex",
  "zehd-lsp",
+ "zehd-rune",
  "zehd-server",
+ "zehd-sigil",
+ "zehd-tome",
+ "zehd-ward",
 ]
 
 [[package]]
@@ -2073,7 +2078,10 @@ dependencies = [
 name = "zehd-lsp"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "tempfile",
  "tokio",
+ "toml",
  "tower-lsp",
  "zehd-codex",
  "zehd-sigil",

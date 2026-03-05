@@ -17,5 +17,10 @@ rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
+zehd-tome = { path = "../zehd-tome" }
+zehd-codex = { path = "../zehd-codex" }
+zehd-sigil = { path = "../zehd-sigil" }
+zehd-rune = { path = "../zehd-rune" }
+zehd-ward = { path = "../zehd-ward" }
 zehd-server = { path = "../zehd-server" }
 zehd-lsp = { path = "../zehd-lsp" }

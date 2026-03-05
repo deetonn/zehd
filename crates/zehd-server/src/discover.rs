@@ -116,6 +116,105 @@ fn file_path_to_url(base: &Path, file: &Path) -> String {
     url
 }
 
+// ── Module Discovery ──────────────────────────────────────────
+
+/// A discovered module file with its namespace and module path.
+#[derive(Debug)]
+pub struct DiscoveredModule {
+    /// The namespace (directory name), e.g. "lib".
+    pub namespace: String,
+    /// The full module path, e.g. "lib::auth::password".
+    pub module_path: String,
+    /// Absolute path to the .z file.
+    pub file_path: PathBuf,
+    /// File contents.
+    pub source: String,
+}
+
+/// Discover all module files under the configured module directories.
+///
+/// Each entry in `module_dirs` is `(namespace, abs_path)`, e.g. `("lib", "/project/lib")`.
+/// Walks each directory recursively for `.z` files and converts to module paths.
+pub fn discover_modules(
+    module_dirs: &[(String, PathBuf)],
+) -> Result<Vec<DiscoveredModule>, StartupError> {
+    let mut modules = Vec::new();
+
+    for (namespace, dir) in module_dirs {
+        if !dir.is_dir() {
+            continue; // Skip non-existent module dirs silently
+        }
+        walk_module_dir(namespace, dir, dir, &mut modules)?;
+    }
+
+    modules.sort_by(|a, b| a.module_path.cmp(&b.module_path));
+    Ok(modules)
+}
+
+fn walk_module_dir(
+    namespace: &str,
+    base: &Path,
+    dir: &Path,
+    modules: &mut Vec<DiscoveredModule>,
+) -> Result<(), StartupError> {
+    let entries = fs::read_dir(dir).map_err(|source| StartupError::IoError {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|source| StartupError::IoError {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+
+        let path = entry.path();
+
+        if path.is_dir() {
+            walk_module_dir(namespace, base, &path, modules)?;
+            continue;
+        }
+
+        // Only process .z files
+        if path.extension().and_then(|e| e.to_str()) != Some("z") {
+            continue;
+        }
+
+        let module_path = file_path_to_module_path(namespace, base, &path);
+        let source = fs::read_to_string(&path).map_err(|source| StartupError::IoError {
+            path: path.clone(),
+            source,
+        })?;
+
+        modules.push(DiscoveredModule {
+            namespace: namespace.to_string(),
+            module_path,
+            file_path: path,
+            source,
+        });
+    }
+
+    Ok(())
+}
+
+/// Convert a file path relative to the module dir into a module path.
+///
+/// - `lib/auth.z` with namespace "lib" → `"lib::auth"`
+/// - `lib/auth/password.z` with namespace "lib" → `"lib::auth::password"`
+fn file_path_to_module_path(namespace: &str, base: &Path, file: &Path) -> String {
+    let relative = file.strip_prefix(base).unwrap_or(file);
+    let stem = relative.with_extension("");
+    let mut path = String::from(namespace);
+
+    for component in stem.components() {
+        let part = component.as_os_str().to_str().unwrap_or("");
+        path.push_str("::");
+        path.push_str(part);
+    }
+
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +299,57 @@ mod tests {
             fs::write(&path, "").unwrap();
         }
         dir
+    }
+
+    // ── Module Discovery Tests ────────────────────────────────
+
+    fn module_path(ns: &str, base: &str, file: &str) -> String {
+        file_path_to_module_path(ns, &PathBuf::from(base), &PathBuf::from(file))
+    }
+
+    #[test]
+    fn module_path_simple() {
+        assert_eq!(module_path("lib", "lib", "lib/auth.z"), "lib::auth");
+    }
+
+    #[test]
+    fn module_path_nested() {
+        assert_eq!(
+            module_path("lib", "lib", "lib/auth/password.z"),
+            "lib::auth::password"
+        );
+    }
+
+    #[test]
+    fn module_path_deep() {
+        assert_eq!(
+            module_path("lib", "lib", "lib/a/b/c.z"),
+            "lib::a::b::c"
+        );
+    }
+
+    #[test]
+    fn discover_modules_finds_z_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join("lib");
+        fs::create_dir_all(lib_dir.join("auth")).unwrap();
+        fs::write(lib_dir.join("math.z"), "fn add(a: int, b: int): int { a + b }").unwrap();
+        fs::write(lib_dir.join("auth/hash.z"), "fn hash(s: string): string { s }").unwrap();
+        fs::write(lib_dir.join("readme.md"), "# ignore me").unwrap();
+
+        let module_dirs = vec![("lib".to_string(), lib_dir)];
+        let modules = discover_modules(&module_dirs).unwrap();
+
+        assert_eq!(modules.len(), 2);
+        let paths: Vec<&str> = modules.iter().map(|m| m.module_path.as_str()).collect();
+        assert!(paths.contains(&"lib::auth::hash"));
+        assert!(paths.contains(&"lib::math"));
+    }
+
+    #[test]
+    fn discover_modules_skips_missing_dir() {
+        let module_dirs = vec![("lib".to_string(), PathBuf::from("/nonexistent/lib"))];
+        let modules = discover_modules(&module_dirs).unwrap();
+        assert!(modules.is_empty());
     }
 }
