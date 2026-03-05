@@ -59,6 +59,28 @@ cargo build
 cargo run -- dev
 ```
 
+## Editor Setup (VS Code)
+
+The VS Code extension provides syntax highlighting, autocompletion, hover information, and diagnostics for `.z` files.
+
+To run the extension in development mode:
+
+1. **Build and install the CLI** (includes the language server):
+
+   ```sh
+   ./scripts/install.sh
+   ```
+
+2. **Open the extension project** in VS Code:
+
+   ```sh
+   code editors/vscode
+   ```
+
+3. **Press F5** to launch the Extension Development Host — a new VS Code window with the zehd extension active.
+
+4. **Open a zehd project** (e.g. `test-app/`) in the new window and edit `.z` files with full language support.
+
 ## File Extension
 
 `.z`
