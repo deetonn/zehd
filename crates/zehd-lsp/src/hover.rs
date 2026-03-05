@@ -1,10 +1,10 @@
 use tower_lsp::lsp_types::*;
 use zehd_sigil::builtin_methods;
-use zehd_sigil::scope::{ScopeId, SymbolKind};
+use zehd_sigil::scope::SymbolKind;
 use zehd_sigil::types::Type;
 use zehd_sigil::ModuleTypes;
 
-use crate::completion::{display_type, has_concrete_type};
+use crate::completion::{display_type, find_best_symbol, resolve_field_type, self_type};
 use crate::diagnostics::{AnalysisResult, LineIndex};
 
 /// Compute hover information for the given source position.
@@ -20,8 +20,8 @@ pub fn hover_info(
     let (word, word_start, word_end) = find_word_at_position(source, cursor)?;
 
     // Detect context: is this a dot-field access?
-    let content = if let Some(receiver) = dot_receiver(source, word_start) {
-        hover_dot_field(&receiver, &word, cursor, analysis, module_types)?
+    let content = if let Some(chain) = dot_receiver_chain(source, word_start) {
+        hover_dot_field(&chain, &word, cursor, analysis, module_types)?
     } else if word == "self" {
         hover_self(module_types)
     } else if let Some(content) = hover_primitive_type(&word) {
@@ -90,8 +90,9 @@ fn is_ident_byte(b: u8) -> bool {
 
 // ── Context detection ───────────────────────────────────────────
 
-/// If the word at `word_start` is preceded by `.`, return the receiver identifier.
-fn dot_receiver(source: &str, word_start: usize) -> Option<String> {
+/// If the word at `word_start` is preceded by `.`, return the full dot chain.
+/// e.g. for `self.request.query.|length`, returns ["self", "request", "query"].
+fn dot_receiver_chain(source: &str, word_start: usize) -> Option<Vec<String>> {
     if word_start == 0 {
         return None;
     }
@@ -101,39 +102,70 @@ fn dot_receiver(source: &str, word_start: usize) -> Option<String> {
         return None;
     }
 
-    // Extract the identifier before the dot.
     let before_dot = &before[..before.len() - 1];
-    let trimmed = before_dot.trim_end();
-    let bytes = trimmed.as_bytes();
-    let end = trimmed.len();
-    let mut start = end;
-    while start > 0 && is_ident_byte(bytes[start - 1]) {
-        start -= 1;
+    let mut chain = Vec::new();
+    let bytes = before_dot.as_bytes();
+    let mut pos = before_dot.trim_end().len();
+
+    loop {
+        let trimmed_len = before_dot[..pos].trim_end().len();
+        pos = trimmed_len;
+
+        // Scan backwards for identifier
+        let end = pos;
+        while pos > 0 && is_ident_byte(bytes[pos - 1]) {
+            pos -= 1;
+        }
+
+        if pos == end {
+            break;
+        }
+
+        chain.push(before_dot[pos..end].to_string());
+
+        // Check for preceding dot
+        let pre = before_dot[..pos].trim_end();
+        if pre.ends_with('.') {
+            pos = pre.len() - 1;
+        } else {
+            break;
+        }
     }
 
-    if start == end {
+    if chain.is_empty() {
         return None;
     }
 
-    Some(trimmed[start..end].to_string())
+    chain.reverse();
+    Some(chain)
 }
 
 // ── Hover generators ────────────────────────────────────────────
 
 fn hover_dot_field(
-    receiver: &str,
+    chain: &[String],
     field: &str,
     cursor: usize,
     analysis: Option<&AnalysisResult>,
     module_types: &ModuleTypes,
 ) -> Option<String> {
-    let receiver_ty = if receiver == "self" {
+    if chain.is_empty() {
+        return None;
+    }
+
+    // Resolve root identifier.
+    let mut receiver_ty = if chain[0] == "self" {
         self_type(module_types)
     } else {
         let analysis = analysis?;
-        let sym = find_best_symbol(analysis, receiver, cursor)?;
+        let sym = find_best_symbol(analysis, &chain[0], cursor)?;
         sym.ty.clone()
     };
+
+    // Resolve each subsequent field in the chain.
+    for field_name in &chain[1..] {
+        receiver_ty = resolve_field_type(&receiver_ty, field_name)?;
+    }
 
     // Check struct fields first.
     if let Type::Struct(st) = &receiver_ty {
@@ -275,57 +307,7 @@ fn format_enumdef(name: &str, ty: &Type) -> String {
     }
 }
 
-// ── Shared symbol lookup ────────────────────────────────────────
-
-/// Find the best symbol for `name` across all scopes, preferring concrete types.
-fn find_best_symbol<'a>(
-    analysis: &'a AnalysisResult,
-    name: &str,
-    cursor: usize,
-) -> Option<&'a zehd_sigil::scope::Symbol> {
-    let cursor_u32 = cursor as u32;
-    let mut best: Option<&zehd_sigil::scope::Symbol> = None;
-
-    for scope_id in 0..analysis.scopes.scope_count() {
-        for (sym_name, symbol) in analysis.scopes.symbols(scope_id as ScopeId) {
-            if sym_name == name && symbol.defined_at.start <= cursor_u32 {
-                if best.is_none()
-                    || (!has_concrete_type(best.unwrap()) && has_concrete_type(symbol))
-                {
-                    best = Some(symbol);
-                }
-            }
-        }
-    }
-
-    best
-}
-
-/// Build the RouteContext type, mirroring the checker's self type.
-fn self_type(module_types: &ModuleTypes) -> Type {
-    let http = module_types.get("std::http");
-    let request_ty = http
-        .and_then(|m| m.get("Request"))
-        .cloned()
-        .unwrap_or(Type::Error);
-    let response_ty = http
-        .and_then(|m| m.get("Response"))
-        .cloned()
-        .unwrap_or(Type::Error);
-
-    Type::Struct(zehd_sigil::types::StructType {
-        name: Some("RouteContext".to_string()),
-        fields: vec![
-            ("request".to_string(), request_ty),
-            ("response".to_string(), response_ty),
-            (
-                "params".to_string(),
-                Type::Map(Box::new(Type::String), Box::new(Type::String)),
-            ),
-        ],
-        type_params: vec![],
-    })
-}
+// find_best_symbol, self_type, and resolve_field_type are shared with completion.rs.
 
 #[cfg(test)]
 mod tests {
@@ -367,19 +349,29 @@ mod tests {
     #[test]
     fn dot_receiver_found() {
         let source = "user.name";
-        assert_eq!(dot_receiver(source, 5), Some("user".to_string()));
+        assert_eq!(dot_receiver_chain(source, 5), Some(vec!["user".to_string()]));
     }
 
     #[test]
     fn dot_receiver_self() {
         let source = "self.request";
-        assert_eq!(dot_receiver(source, 5), Some("self".to_string()));
+        assert_eq!(dot_receiver_chain(source, 5), Some(vec!["self".to_string()]));
+    }
+
+    #[test]
+    fn dot_receiver_chained() {
+        let source = "self.request.query.length";
+        // "length" starts at position 19
+        assert_eq!(
+            dot_receiver_chain(source, 19),
+            Some(vec!["self".to_string(), "request".to_string(), "query".to_string()])
+        );
     }
 
     #[test]
     fn dot_receiver_no_dot() {
         let source = "username";
-        assert_eq!(dot_receiver(source, 0), None);
+        assert_eq!(dot_receiver_chain(source, 0), None);
     }
 
     #[test]

@@ -113,10 +113,17 @@ fn string_replace() {
 #[test]
 fn string_substring() {
     let result = helpers::call_fn0(
-        r#"fn f(): string { "hello".substring(1, 4) }"#,
+        r#"fn f(): Result<string, string> { "hello".substring(1, 4) }"#,
         vec![],
     );
-    assert_eq!(result, Value::String("ell".to_string()));
+    assert_eq!(
+        result,
+        Value::Enum {
+            type_idx: 0xFFFF,
+            variant_idx: 0,
+            payload: Some(Box::new(Value::String("ell".to_string()))),
+        }
+    );
 }
 
 #[test]
@@ -257,13 +264,32 @@ fn list_reverse() {
 #[test]
 fn list_slice() {
     let result = helpers::call_fn0(
-        r#"fn f(): List<int> { [1, 2, 3, 4, 5].slice(1, 4) }"#,
+        r#"fn f(): Result<List<int>, string> { [1, 2, 3, 4, 5].slice(1, 4) }"#,
         vec![],
     );
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(2), Value::Int(3), Value::Int(4)])
+        Value::Enum {
+            type_idx: 0xFFFF,
+            variant_idx: 0,
+            payload: Some(Box::new(Value::List(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))),
+        }
     );
+}
+
+#[test]
+fn list_slice_out_of_bounds() {
+    let result = helpers::call_fn0(
+        r#"fn f(): Result<List<int>, string> { [1, 2, 3].slice(0, 10) }"#,
+        vec![],
+    );
+    match result {
+        Value::Enum { type_idx: 0xFFFF, variant_idx: 1, payload: Some(msg) } => {
+            let Value::String(s) = *msg else { panic!("expected string error message") };
+            assert!(s.contains("out of bounds"), "expected out of bounds message, got: {s}");
+        }
+        other => panic!("expected Err result, got: {other:?}"),
+    }
 }
 
 // ── Int Methods ─────────────────────────────────────────────────
@@ -398,6 +424,92 @@ fn method_on_variable() {
 }
 
 #[test]
+fn method_on_nested_field_access() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): int {
+            let obj = { name: "hello" };
+            obj.name.length
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn method_call_on_nested_field_access() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): bool {
+            let obj = { name: "hello world" };
+            obj.name.contains("world")
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn triple_nested_field_method() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): int {
+            let obj = { inner: { name: "hello" } };
+            obj.inner.name.length
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn method_on_list_field() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): int {
+            let obj = { items: [1, 2, 3] };
+            obj.items.length
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn method_call_on_list_field() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): bool {
+            let obj = { items: [1, 2, 3] };
+            obj.items.contains(2)
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn substring_out_of_bounds() {
+    // substring with out-of-range indices returns Err
+    let result = helpers::call_fn0(
+        r#"fn f(): Result<string, string> { "H".substring(4, 5) }"#,
+        vec![],
+    );
+    match result {
+        Value::Enum { type_idx: 0xFFFF, variant_idx: 1, payload: Some(msg) } => {
+            let Value::String(s) = *msg else { panic!("expected string error message") };
+            assert!(s.contains("out of bounds"), "expected out of bounds message, got: {s}");
+        }
+        other => panic!("expected Err result, got: {other:?}"),
+    }
+}
+
+#[test]
 fn method_result_in_let() {
     let result = helpers::call_fn0(
         r#"
@@ -417,4 +529,146 @@ fn method_result_in_let() {
             Value::String("c".to_string()),
         ])
     );
+}
+
+// ── Handler context (self.request.field.method) ────────────────
+
+#[test]
+fn method_on_self_request_query() {
+    // Use compile_module_with_std + context_with_std for handler tests.
+    let module = helpers::compile_module_with_std(
+        r#"
+        import { Request } from std::http;
+        get {
+            self.request.query.length
+        }
+        "#,
+    );
+    let context = helpers::context_with_std(module);
+    let mut vm = zehd_ward::vm::StackVm::new();
+
+    // Run server_init if present
+    if let Some(chunk) = &context.module.server_init {
+        use zehd_ward::VmBackend;
+        vm.execute(chunk, &context).unwrap();
+    }
+
+    let self_value = Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/test".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String("foo=bar".to_string())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+    let result = vm.execute_handler(0, &context, self_value).unwrap();
+    assert_eq!(result, Value::Int(7)); // "foo=bar".length == 7
+}
+
+#[test]
+fn method_call_on_self_request_query() {
+    let module = helpers::compile_module_with_std(
+        r#"
+        import { Request } from std::http;
+        get {
+            self.request.query.contains("foo")
+        }
+        "#,
+    );
+    let context = helpers::context_with_std(module);
+    let mut vm = zehd_ward::vm::StackVm::new();
+    if let Some(chunk) = &context.module.server_init {
+        use zehd_ward::VmBackend;
+        vm.execute(chunk, &context).unwrap();
+    }
+    let self_value = Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/test".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String("foo=bar".to_string())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+    let result = vm.execute_handler(0, &context, self_value).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn split_on_nested_field() {
+    let module = helpers::compile_module_with_std(
+        r#"
+        import { Request } from std::http;
+        get {
+            self.request.query.split("&")
+        }
+        "#,
+    );
+    let context = helpers::context_with_std(module);
+    let mut vm = zehd_ward::vm::StackVm::new();
+    if let Some(chunk) = &context.module.server_init {
+        use zehd_ward::VmBackend;
+        vm.execute(chunk, &context).unwrap();
+    }
+    let self_value = Value::Object(vec![
+        ("request".to_string(), Value::Object(vec![
+            ("method".to_string(), Value::String("GET".to_string())),
+            ("path".to_string(), Value::String("/test".to_string())),
+            ("headers".to_string(), Value::Object(vec![])),
+            ("body".to_string(), Value::String(String::new())),
+            ("query".to_string(), Value::String("a=1&b=2".to_string())),
+        ])),
+        ("response".to_string(), Value::Object(vec![
+            ("status".to_string(), Value::Int(200)),
+        ])),
+        ("params".to_string(), Value::Object(vec![])),
+    ]);
+    let result = vm.execute_handler(0, &context, self_value).unwrap();
+    assert_eq!(
+        result,
+        Value::List(vec![
+            Value::String("a=1".to_string()),
+            Value::String("b=2".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn chain_method_on_nested_field() {
+    let result = helpers::call_fn0(
+        r#"
+        fn f(): int {
+            let obj = { data: "a,b,c" };
+            obj.data.split(",").length
+        }
+        "#,
+        vec![],
+    );
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn chain_method_on_fn_result() {
+    let result = helpers::call_fn(
+        r#"
+        fn get_name(): string {
+            "hello world"
+        }
+        fn f(): bool {
+            get_name().contains("world")
+        }
+        "#,
+        1, // f is at index 1 (get_name is 0)
+        vec![],
+    );
+    assert_eq!(result, Value::Bool(true));
 }

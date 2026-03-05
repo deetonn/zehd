@@ -100,7 +100,7 @@ pub fn dispatch_method(
             Ok(Value::String(s.replace(from.as_str(), to.as_str())))
         }
         9 => {
-            // string.substring(start, end)
+            // string.substring(start, end) → Result<string, string>
             let Value::String(s) = &receiver else {
                 return Err(type_error("string", &receiver));
             };
@@ -110,13 +110,17 @@ pub fn dispatch_method(
             let Value::Int(end) = &args[1] else {
                 return Err(arg_type_error("int", &args[1]));
             };
-            let start = (*start).max(0) as usize;
-            let end = (*end).max(0) as usize;
-            let chars: Vec<char> = s.chars().collect();
-            let end = end.min(chars.len());
-            let start = start.min(end);
-            let result: String = chars[start..end].iter().collect();
-            Ok(Value::String(result))
+            let start = *start;
+            let end = *end;
+            let char_len = s.chars().count() as i64;
+            if start < 0 || end < 0 || start > char_len || end > char_len || start > end {
+                Ok(result_err(format!(
+                    "substring indices [{start}, {end}) out of bounds for string of length {char_len}"
+                )))
+            } else {
+                let result: String = s.chars().skip(start as usize).take((end - start) as usize).collect();
+                Ok(result_ok(Value::String(result)))
+            }
         }
         10 => {
             // string.index_of(needle) → Option<int>
@@ -212,7 +216,7 @@ pub fn dispatch_method(
             Ok(Value::List(items))
         }
         17 => {
-            // list.slice(start, end)
+            // list.slice(start, end) → Result<List<T>, string>
             let Value::List(items) = &receiver else {
                 return Err(type_error("list", &receiver));
             };
@@ -222,11 +226,16 @@ pub fn dispatch_method(
             let Value::Int(end) = &args[1] else {
                 return Err(arg_type_error("int", &args[1]));
             };
-            let start = (*start).max(0) as usize;
-            let end = (*end).max(0) as usize;
-            let end = end.min(items.len());
-            let start = start.min(end);
-            Ok(Value::List(items[start..end].to_vec()))
+            let start = *start;
+            let end = *end;
+            let len = items.len() as i64;
+            if start < 0 || end < 0 || start > len || end > len || start > end {
+                Ok(result_err(format!(
+                    "slice indices [{start}, {end}) out of bounds for list of length {len}"
+                )))
+            } else {
+                Ok(result_ok(Value::List(items[start as usize..end as usize].to_vec())))
+            }
         }
 
         // ── Int methods (18, 20, 22) ────────────────────────
@@ -294,6 +303,22 @@ pub fn dispatch_method(
             format!("unknown method id {method_id}"),
         )
         .build()),
+    }
+}
+
+fn result_ok(value: Value) -> Value {
+    Value::Enum {
+        type_idx: 0xFFFF,
+        variant_idx: 0,
+        payload: Some(Box::new(value)),
+    }
+}
+
+fn result_err(message: String) -> Value {
+    Value::Enum {
+        type_idx: 0xFFFF,
+        variant_idx: 1,
+        payload: Some(Box::new(Value::String(message))),
     }
 }
 

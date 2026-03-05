@@ -10,8 +10,9 @@ use crate::diagnostics::{AnalysisResult, LineIndex};
 
 /// What the user is typing at the cursor position.
 enum CompletionContext {
-    /// After `ident.` or `ident.<partial>` — suggest struct fields.
-    DotAccess { ident: String },
+    /// After `expr.` or `expr.<partial>` — suggest fields/methods.
+    /// `chain` is the dot-separated identifier chain (e.g. ["self", "request", "query"]).
+    DotAccess { chain: Vec<String> },
     /// Inside `from <cursor>` — suggest module paths.
     ImportPath { partial: String },
     /// Inside `import { <cursor> } from path;` — suggest exports.
@@ -72,20 +73,17 @@ fn detect_context(source: &str, cursor: usize) -> CompletionContext {
         }
     }
 
-    // ── Dot access: `ident.` or `ident.<partial>` ────────────────
-    // Scan backwards for a dot.
+    // ── Dot access: `expr.` or `expr.<partial>` ──────────────────
+    // Scan backwards for a dot. Supports chained access (e.g. self.request.query.).
     let before_trimmed = before.trim_end();
     if let Some(dot_pos) = before_trimmed.rfind('.') {
         let after_dot = &before_trimmed[dot_pos + 1..];
         // After the dot should only be identifier chars (partial field name) or empty.
         if after_dot.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            // Extract the identifier before the dot.
             let before_dot = &before_trimmed[..dot_pos];
-            let ident = extract_ident_backwards(before_dot);
-            if !ident.is_empty() {
-                return CompletionContext::DotAccess {
-                    ident: ident.to_string(),
-                };
+            let chain = extract_dot_chain_backwards(before_dot);
+            if !chain.is_empty() {
+                return CompletionContext::DotAccess { chain };
             }
         }
     }
@@ -98,18 +96,41 @@ fn detect_context(source: &str, cursor: usize) -> CompletionContext {
     CompletionContext::General
 }
 
-/// Extract an identifier by scanning backwards from the end of `s`.
-fn extract_ident_backwards(s: &str) -> &str {
+/// Extract the full dot chain by scanning backwards from the end of `s`.
+/// e.g. "let x = self.request.query" → ["self", "request", "query"]
+fn extract_dot_chain_backwards(s: &str) -> Vec<String> {
+    let mut chain = Vec::new();
     let s = s.trim_end();
-    let end = s.len();
-    let start = s
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
-        .last()
-        .map(|(i, _)| i)
-        .unwrap_or(end);
-    &s[start..end]
+    let bytes = s.as_bytes();
+    let mut pos = s.len();
+
+    loop {
+        // Scan backwards for identifier
+        let end = pos;
+        while pos > 0 && {
+            let b = bytes[pos - 1];
+            b.is_ascii_alphanumeric() || b == b'_'
+        } {
+            pos -= 1;
+        }
+
+        if pos == end {
+            break; // No identifier found
+        }
+
+        chain.push(s[pos..end].to_string());
+
+        // Check for preceding dot
+        let before = s[..pos].trim_end();
+        if before.ends_with('.') {
+            pos = before.len() - 1;
+        } else {
+            break;
+        }
+    }
+
+    chain.reverse();
+    chain
 }
 
 /// Heuristic: check if the cursor is in a type annotation position.
@@ -165,14 +186,8 @@ pub fn completions(
     let ctx = detect_context(source, cursor);
 
     match ctx {
-        CompletionContext::DotAccess { ident } => {
-            if ident == "self" {
-                self_field_completions(module_types)
-            } else if let Some(analysis) = analysis {
-                field_completions_for_ident(&ident, cursor, analysis)
-            } else {
-                vec![]
-            }
+        CompletionContext::DotAccess { chain } => {
+            resolve_chain_completions(&chain, cursor, analysis, module_types)
         }
         CompletionContext::ImportPath { partial } => {
             module_path_completions(module_types, &partial)
@@ -372,32 +387,86 @@ fn scope_type_completions(analysis: &AnalysisResult, cursor: usize) -> Vec<Compl
         .collect()
 }
 
-fn field_completions_for_ident(
-    ident: &str,
+/// Resolve a dot chain and return completions for the final type.
+fn resolve_chain_completions(
+    chain: &[String],
     cursor: usize,
-    analysis: &AnalysisResult,
+    analysis: Option<&AnalysisResult>,
+    module_types: &ModuleTypes,
 ) -> Vec<CompletionItem> {
-    let cursor_u32 = cursor as u32;
+    if chain.is_empty() {
+        return vec![];
+    }
 
-    // Find the best symbol across all scopes (prefer concrete types).
+    // Resolve root identifier.
+    let mut ty = if chain[0] == "self" {
+        self_type(module_types)
+    } else {
+        let Some(analysis) = analysis else {
+            return vec![];
+        };
+        let Some(sym) = find_best_symbol(analysis, &chain[0], cursor) else {
+            return vec![];
+        };
+        sym.ty.clone()
+    };
+
+    // Resolve each subsequent field in the chain.
+    for field_name in &chain[1..] {
+        let Some(next_ty) = resolve_field_type(&ty, field_name) else {
+            return vec![];
+        };
+        ty = next_ty;
+    }
+
+    field_completions(&ty)
+}
+
+/// Resolve a single field access on a type, returning the field's type.
+pub(crate) fn resolve_field_type(ty: &Type, field: &str) -> Option<Type> {
+    // Check struct fields.
+    if let Type::Struct(st) = ty {
+        for (name, field_ty) in &st.fields {
+            if name == field {
+                return Some(field_ty.clone());
+            }
+        }
+    }
+
+    // Check zero-arg built-in properties (e.g. length).
+    if let Some(sig) = builtin_methods::resolve_builtin_method(ty, field) {
+        if sig.params.is_empty() {
+            return Some(sig.return_type);
+        }
+    }
+
+    None
+}
+
+/// Find the best symbol for `name` across all scopes, preferring concrete types.
+pub(crate) fn find_best_symbol<'a>(
+    analysis: &'a AnalysisResult,
+    name: &str,
+    cursor: usize,
+) -> Option<&'a zehd_sigil::scope::Symbol> {
+    let cursor_u32 = cursor as u32;
     let mut best: Option<&zehd_sigil::scope::Symbol> = None;
     for scope_id in 0..analysis.scopes.scope_count() {
-        for (name, symbol) in analysis.scopes.symbols(scope_id as ScopeId) {
-            if name == ident && symbol.defined_at.start <= cursor_u32 {
-                if best.is_none() || (!has_concrete_type(best.unwrap()) && has_concrete_type(symbol))
+        for (sym_name, symbol) in analysis.scopes.symbols(scope_id as ScopeId) {
+            if sym_name == name && symbol.defined_at.start <= cursor_u32 {
+                if best.is_none()
+                    || (!has_concrete_type(best.unwrap()) && has_concrete_type(symbol))
                 {
                     best = Some(symbol);
                 }
             }
         }
     }
-
-    best.map(|sym| field_completions(&sym.ty)).unwrap_or_default()
+    best
 }
 
-/// Build completions for `self.` — the implicit route context.
-/// Mirrors the RouteContext struct synthesized in the checker.
-fn self_field_completions(module_types: &ModuleTypes) -> Vec<CompletionItem> {
+/// Build the RouteContext type, mirroring the checker's self type.
+pub(crate) fn self_type(module_types: &ModuleTypes) -> Type {
     let http = module_types.get("std::http");
     let request_ty = http
         .and_then(|m| m.get("Request"))
@@ -408,7 +477,7 @@ fn self_field_completions(module_types: &ModuleTypes) -> Vec<CompletionItem> {
         .cloned()
         .unwrap_or(Type::Error);
 
-    let self_ty = Type::Struct(zehd_sigil::types::StructType {
+    Type::Struct(zehd_sigil::types::StructType {
         name: Some("RouteContext".to_string()),
         fields: vec![
             ("request".to_string(), request_ty),
@@ -419,9 +488,7 @@ fn self_field_completions(module_types: &ModuleTypes) -> Vec<CompletionItem> {
             ),
         ],
         type_params: vec![],
-    });
-
-    field_completions(&self_ty)
+    })
 }
 
 fn field_completions(ty: &Type) -> Vec<CompletionItem> {
@@ -544,14 +611,30 @@ mod tests {
     fn detect_dot_access() {
         let source = "user.";
         let ctx = detect_context(source, source.len());
-        assert!(matches!(ctx, CompletionContext::DotAccess { ident } if ident == "user"));
+        assert!(matches!(ctx, CompletionContext::DotAccess { ref chain } if chain == &["user"]));
     }
 
     #[test]
     fn detect_dot_access_with_partial() {
         let source = "user.na";
         let ctx = detect_context(source, source.len());
-        assert!(matches!(ctx, CompletionContext::DotAccess { ident } if ident == "user"));
+        assert!(matches!(ctx, CompletionContext::DotAccess { ref chain } if chain == &["user"]));
+    }
+
+    #[test]
+    fn detect_chained_dot_access() {
+        let source = "self.request.query.";
+        let ctx = detect_context(source, source.len());
+        assert!(matches!(ctx, CompletionContext::DotAccess { ref chain }
+            if chain == &["self", "request", "query"]));
+    }
+
+    #[test]
+    fn detect_chained_dot_access_with_partial() {
+        let source = "self.request.query.len";
+        let ctx = detect_context(source, source.len());
+        assert!(matches!(ctx, CompletionContext::DotAccess { ref chain }
+            if chain == &["self", "request", "query"]));
     }
 
     #[test]
@@ -725,11 +808,15 @@ mod tests {
     }
 
     #[test]
-    fn extract_ident_backwards_simple() {
-        assert_eq!(extract_ident_backwards("foo"), "foo");
-        assert_eq!(extract_ident_backwards("bar.baz"), "baz");
-        assert_eq!(extract_ident_backwards("let x = user"), "user");
-        assert_eq!(extract_ident_backwards("  hello  "), "hello");
+    fn extract_chain_backwards_simple() {
+        assert_eq!(extract_dot_chain_backwards("foo"), vec!["foo"]);
+        assert_eq!(extract_dot_chain_backwards("bar.baz"), vec!["bar", "baz"]);
+        assert_eq!(extract_dot_chain_backwards("let x = user"), vec!["user"]);
+        assert_eq!(extract_dot_chain_backwards("  hello  "), vec!["hello"]);
+        assert_eq!(
+            extract_dot_chain_backwards("self.request.query"),
+            vec!["self", "request", "query"]
+        );
     }
 
     #[test]

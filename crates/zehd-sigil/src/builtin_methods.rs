@@ -144,7 +144,7 @@ fn resolve_string_method(name: &str) -> Option<MethodSig> {
         "substring" => Some(MethodSig {
             method_id: STRING_SUBSTRING,
             params: vec![Type::Int, Type::Int],
-            return_type: Type::String,
+            return_type: Type::Result(Box::new(Type::String), Box::new(Type::String)),
         }),
         "index_of" => Some(MethodSig {
             method_id: STRING_INDEX_OF,
@@ -190,7 +190,7 @@ fn resolve_list_method(name: &str, elem: &Type) -> Option<MethodSig> {
         "slice" => Some(MethodSig {
             method_id: LIST_SLICE,
             params: vec![Type::Int, Type::Int],
-            return_type: Type::List(Box::new(elem.clone())),
+            return_type: Type::Result(Box::new(Type::List(Box::new(elem.clone()))), Box::new(Type::String)),
         }),
         _ => None,
     }
